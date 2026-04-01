@@ -147,6 +147,38 @@ function shallowEqualState(prev, next) {
   return false;
 }
 
+// ── useMemo ───────────────────────────────────────────────────────────────────
+export function useMemo(factory, deps) {
+  const instance = currentInstance;
+  const idx = instance.hookIndex++;
+
+  // 첫 렌더: factory 실행 후 결과와 deps를 저장
+  if (idx >= instance.hooks.length) {
+    const value = factory();
+    instance.hooks.push({ type: 'memo', value, deps: deps ? [...deps] : undefined });
+    trace('HOOK', { hook: 'useMemo', phase: 'init', idx });
+    return value;
+  }
+
+  const hook = instance.hooks[idx];
+  const prevDeps = hook.deps;
+
+  const shouldRecompute =
+    prevDeps === undefined ||   // 첫 마운트
+    deps === undefined ||        // deps 없음 → 매 렌더
+    !shallowEqual(prevDeps, deps);
+
+  if (shouldRecompute) {
+    trace('HOOK', { hook: 'useMemo', phase: 'recompute', idx });
+    hook.value = factory();
+    hook.deps = deps ? [...deps] : undefined;
+  } else {
+    trace('HOOK', { hook: 'useMemo', phase: 'cache-hit', idx });
+  }
+
+  return hook.value;
+}
+
 // ── 테스트 유틸리티 ───────────────────────────────────────────────────────────
 export function __resetHooksForTests() {
   currentInstance = null;

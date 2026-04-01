@@ -3,7 +3,7 @@
 
 import { createElement } from '../framework/vdom.js';
 
-export function PostCard({ post, ttl, liking = false, hasLiked = false, isArchiveView = false, onLike } = {}) {
+export function PostCard({ post, ttl, liking = false, hasLiked = false, isArchiveView = false, rank = null, onLike } = {}) {
   const isArchived = Boolean(isArchiveView && post.isExpired);
   const shouldShowTtl = !isArchived;
   const currentTtl = ttl ?? post.ttl ?? 0;
@@ -26,6 +26,9 @@ export function PostCard({ post, ttl, liking = false, hasLiked = false, isArchiv
     style: `opacity: ${opacity}`,
   },
     createElement('div', { class: 'post-card__media' },
+      rank !== null
+        ? createElement('div', { class: `post-card__rank post-card__rank--${rank <= 3 ? rank : 'other'}` }, `#${rank}`)
+        : createElement('span', {}),
       post.imageData
         ? createElement('img', { class: 'post-card__image', src: post.imageData, alt: '' })
         : createElement('div', { class: 'post-card__no-image' }),

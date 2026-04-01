@@ -236,6 +236,13 @@ function diffImpl(oldV, newV, patches, idx, path) {
 
     const oc = oldV.children || [];
     const nc = newV.children || [];
+    const hasKeyedChildren =
+      oc.some(child => child && child.key !== null) ||
+      nc.some(child => child && child.key !== null);
+    if (hasKeyedChildren && !isSameKeyOrder(oc, nc)) {
+      patches.push({ type: 'REPLACE', index: cur, oldV, newV, path });
+      return patches;
+    }
     const maxLen = Math.max(oc.length, nc.length);
 
     for (let i = 0; i < maxLen; i++) {
@@ -261,11 +268,11 @@ function diffImpl(oldV, newV, patches, idx, path) {
 export function buildIndexMap(node, map, idx) {
   map = map || new Map();
   idx = idx || { v: 0 };
+  if (!shouldCountNode(node)) return map;
   map.set(idx.v, node);
   if (node.nodeType !== Node.ELEMENT_NODE) return map;
   for (const child of node.childNodes) {
-    // countNodes는 모든 텍스트 VNode를 1로 계산하므로 buildIndexMap도 동일하게 처리
-    // (빈 텍스트 노드 스킵 시 인덱스 불일치 발생)
+    if (!shouldCountNode(child)) continue;
     idx.v++;
     buildIndexMap(child, map, idx);
   }
@@ -290,9 +297,10 @@ export function patch(domRoot, patches) {
   }
   const doc = domRoot.ownerDocument || document;
   let currentRoot = domRoot;
-  let map = buildIndexMap(currentRoot);
+  const map = buildIndexMap(currentRoot);
+  const sortedPatches = [...patches].sort((a, b) => b.index - a.index);
 
-  for (const p of patches) {
+  for (const p of sortedPatches) {
     const target = map.get(p.index);
 
     switch (p.type) {
@@ -304,7 +312,6 @@ export function patch(domRoot, patches) {
         parent.replaceChild(neo, target);
         if (target === currentRoot) currentRoot = neo;
         flashNode(neo);
-        map = buildIndexMap(currentRoot);
         break;
       }
       case 'TEXT': {
@@ -338,21 +345,19 @@ export function patch(domRoot, patches) {
         if (target && target.parentNode) {
           target.parentNode.insertBefore(neo, target);
         } else {
-          const prevNode = map.get(p.index - 1);
+          const prevNode = findNearestMountedNode(map, p.index - 1);
           const parent = prevNode
             ? (prevNode.nodeType === Node.ELEMENT_NODE ? prevNode : prevNode.parentNode)
-            : currentRoot;
+            : currentRoot.parentNode;
           if (parent) parent.appendChild(neo);
         }
         flashNode(neo);
-        map = buildIndexMap(currentRoot);
         break;
       }
       case 'REMOVE': {
         if (!target) break;
         const parent = target.parentNode;
         if (parent) parent.removeChild(target);
-        map = buildIndexMap(currentRoot);
         break;
       }
     }
@@ -419,4 +424,31 @@ function summarizePatch(patchEntry) {
   }
 
   return summary;
+}
+
+function shouldCountNode(node) {
+  if (!node) return false;
+  if (node.nodeType === Node.TEXT_NODE) {
+    return (node.textContent || '').trim().length > 0;
+  }
+  return node.nodeType === Node.ELEMENT_NODE;
+}
+
+function isSameKeyOrder(oldChildren, newChildren) {
+  if (oldChildren.length !== newChildren.length) return false;
+  for (let i = 0; i < oldChildren.length; i++) {
+    const oldKey = oldChildren[i]?.key ?? null;
+    const newKey = newChildren[i]?.key ?? null;
+    if (oldKey !== newKey) return false;
+  }
+  return true;
+}
+
+function findNearestMountedNode(map, startIndex) {
+  for (let i = startIndex; i >= 0; i--) {
+    const node = map.get(i);
+    if (!node) continue;
+    if (node.parentNode || node.nodeType === Node.ELEMENT_NODE) return node;
+  }
+  return null;
 }

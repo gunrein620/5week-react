@@ -7,6 +7,7 @@ import { PostCard } from './PostCard.js';
 export function Feed({
   livePosts = [],
   myPosts = [],
+  popularPosts = [],
   activeTab = 'live',
   postTtls = {},
   likingPosts = {},
@@ -14,11 +15,20 @@ export function Feed({
   onTabChange,
   onLike,
 } = {}) {
-  const visiblePosts = activeTab === 'mine' ? myPosts : livePosts;
   const isMineTab = activeTab === 'mine';
-  const emptyTitle = isMineTab ? '아직 내가 올린 글이 없어요' : '올라온 소식이 없어요';
+  const isPopularTab = activeTab === 'popular';
+
+  const visiblePosts = isMineTab ? myPosts : isPopularTab ? popularPosts : livePosts;
+
+  const emptyTitle = isMineTab
+    ? '아직 내가 올린 글이 없어요'
+    : isPopularTab
+    ? '아직 좋아요를 받은 글이 없어요'
+    : '올라온 소식이 없어요';
   const emptySub = isMineTab
     ? '새 순간을 공유하면 여기서 따로 모아볼 수 있어요'
+    : isPopularTab
+    ? '게시물에 좋아요를 눌러 순위를 만들어보세요'
     : '가장 먼저 순간을 남겨보세요';
 
   return createElement('section', { class: 'feed-page' },
@@ -31,6 +41,13 @@ export function Feed({
         onClick: () => onTabChange && onTabChange('live'),
       }, '실시간', createElement('span', { class: 'tab-badge' }, String(livePosts.length))),
       createElement('button', {
+        class: `feed-tabs__button${activeTab === 'popular' ? ' feed-tabs__button--active' : ''}`,
+        type: 'button',
+        role: 'tab',
+        'aria-selected': activeTab === 'popular' ? 'true' : 'false',
+        onClick: () => onTabChange && onTabChange('popular'),
+      }, '인기순', createElement('span', { class: 'tab-badge' }, String(popularPosts.length))),
+      createElement('button', {
         class: `feed-tabs__button${activeTab === 'mine' ? ' feed-tabs__button--active' : ''}`,
         type: 'button',
         role: 'tab',
@@ -40,12 +57,12 @@ export function Feed({
     ),
     createElement('div', {
       class: isMineTab ? 'feed-panel feed-panel--mine' : 'feed-panel feed-panel--live',
-      'data-key': isMineTab ? 'mine-panel' : 'live-panel',
+      'data-key': isMineTab ? 'mine-panel' : isPopularTab ? 'popular-panel' : 'live-panel',
     },
       visiblePosts.length === 0
         ? createElement('div', {
             class: 'feed-empty',
-            'data-key': isMineTab ? 'mine-empty' : 'live-empty',
+            'data-key': isMineTab ? 'mine-empty' : isPopularTab ? 'popular-empty' : 'live-empty',
           },
             createElement('div', { class: 'feed-empty__icon' }),
             createElement('p', { class: 'feed-empty__title' }, emptyTitle),
@@ -53,15 +70,16 @@ export function Feed({
           )
         : createElement('div', {
             class: 'feed-grid',
-            'data-key': isMineTab ? 'mine-grid' : 'live-grid',
+            'data-key': isMineTab ? 'mine-grid' : isPopularTab ? 'popular-grid' : 'live-grid',
           },
-          ...visiblePosts.map(post =>
+          ...visiblePosts.map((post, i) =>
             PostCard({
               post,
               ttl: postTtls[post.id] ?? post.ttl,
               liking: Boolean(likingPosts[post.id]),
               hasLiked: post.likedBy ? post.likedBy.includes(username) : false,
               isArchiveView: isMineTab,
+              rank: isPopularTab ? i + 1 : null,
               onLike,
             })
           )

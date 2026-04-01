@@ -614,6 +614,42 @@ body {
   gap: 12px;
 }
 
+.post-card__rank {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 9px;
+  border-radius: var(--radius-pill);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  backdrop-filter: blur(4px);
+}
+
+.post-card__rank--1 {
+  background: rgba(255, 200, 0, 0.9);
+  color: #5a3e00;
+}
+
+.post-card__rank--2 {
+  background: rgba(200, 210, 220, 0.9);
+  color: #2a3a4a;
+}
+
+.post-card__rank--3 {
+  background: rgba(205, 120, 60, 0.9);
+  color: #fff;
+}
+
+.post-card__rank--other {
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+}
+
 .post-card__badge {
   display: inline-flex;
   align-items: center;

@@ -3,7 +3,7 @@
 // 자식 컴포넌트(Login, Feed, CreatePost, PostCard)는 props만 받는 순수 함수입니다.
 
 import { createElement } from '../framework/vdom.js';
-import { useState, useEffect } from '../framework/hooks.js';
+import { useState, useEffect, useMemo } from '../framework/hooks.js';
 import { getRoute, navigate } from '../framework/router.js';
 import { Login } from './Login.js';
 import { Feed } from './Feed.js';
@@ -77,7 +77,7 @@ export function App() {
       setPostTtls(prev => {
         const next = {};
         for (const [id, ttl] of Object.entries(prev)) {
-          next[id] = ttl - 1;
+          next[id] = Math.max(0, ttl - 1);
         }
         return next;
       });
@@ -92,10 +92,10 @@ export function App() {
     setLivePosts(live);
     setMyPosts(mine);
     // 서버에서 받은 TTL로 로컬 TTL 갱신
-    setPostTtls(prev => {
-      const next = { ...prev };
+    setPostTtls(() => {
+      const next = {};
       for (const post of [...live, ...mine]) {
-        next[post.id] = post.ttl;
+        next[post.id] = Math.max(0, post.ttl ?? 0);
       }
       return next;
     });
@@ -204,6 +204,18 @@ export function App() {
   };
 
   // ── 페이지 렌더 ────────────────────────────────────────────────────────────
+  const visibleLivePosts = livePosts.filter((post) => {
+    const ttl = postTtls[post.id] ?? post.ttl ?? 0;
+    return ttl > 0;
+  });
+
+  // livePosts가 바뀔 때(서버 폴링, 3초)만 재계산
+  // TTL 카운트다운(1초마다)에서는 cache-hit → 정렬 생략
+  const popularPosts = useMemo(
+    () => [...livePosts].sort((a, b) => b.likes - a.likes),
+    [livePosts]
+  );
+
   let page;
   switch (effectiveRoute) {
     case '#/login':
@@ -230,8 +242,9 @@ export function App() {
       break;
     default:
       page = Feed({
-        livePosts,
+        livePosts: visibleLivePosts,
         myPosts,
+        popularPosts,
         activeTab,
         postTtls,
         likingPosts,
