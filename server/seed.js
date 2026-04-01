@@ -66,6 +66,19 @@ const POST_TEXTS = [
   '오늘의 하이라이트를 여기 남긴다.',
 ];
 
+const SEED_LIKES = [
+   87, 143,  12,  55,  99,  // 민수
+   34,  76, 120,   8,  61,  // 철수
+  143,   3,  47,  92,  28,  // 영희
+  110,  65,  19,  83, 137,  // 은숙
+    5,  44, 101,  72,  56,  // 민영
+  128,  17,  88,   2, 115,  // 현상
+   39,  94,  23, 143,  67,  // 상훈
+   11,  79, 132,  50, 105,  // 주영
+  141,   6,  58,  96,  31,  // 영심
+  119,  42,  85,  14, 143,  // 수찬
+];
+
 function makeProfileImage(seed) {
   return `https://picsum.photos/seed/${encodeURIComponent(seed)}-profile/200/200`;
 }
@@ -108,7 +121,7 @@ function seedData(users, livePosts, archivedPosts, userProfiles) {
   for (const user of USERS) {
     for (let postIndex = 1; postIndex <= 5; postIndex += 1) {
       const baseTtl = ttls[postOrder];
-      const likes = 0;
+      const likes = SEED_LIKES[postOrder];
       const ttl = baseTtl;
       const createdAt = now - postOrder * 1000;
       const post = {
