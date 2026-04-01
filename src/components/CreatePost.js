@@ -5,27 +5,11 @@ import { beginComponent, endComponent } from '../framework/component.js';
 import { navigate } from '../framework/router.js';
 import { api } from '../services/api.js';
 
-// Canvas로 이미지 압축
-function compressImage(file) {
-  return new Promise((resolve) => {
+function readFileAsDataURL(file) {
+  return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = (e) => {
-      const img = new Image();
-      img.onload = () => {
-        const MAX = 800;
-        let { width, height } = img;
-        if (width > MAX || height > MAX) {
-          if (width > height) { height = (height / width) * MAX; width = MAX; }
-          else { width = (width / height) * MAX; height = MAX; }
-        }
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
-        resolve(canvas.toDataURL('image/jpeg', 0.7));
-      };
-      img.src = e.target.result;
-    };
+    reader.onload = (e) => resolve(e.target.result);
+    reader.onerror = () => reject(new Error('파일을 읽을 수 없습니다.'));
     reader.readAsDataURL(file);
   });
 }
@@ -46,10 +30,21 @@ export function CreatePost() {
   const handleImageChange = (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    compressImage(file).then(data => {
-      setImageData(data);
-      setPreview(data);
-    });
+
+    if (file.type && !file.type.startsWith('image/')) {
+      setError('이미지 파일만 올릴 수 있어요.');
+      return;
+    }
+
+    setError('');
+    readFileAsDataURL(file)
+      .then(data => {
+        setImageData(data);
+        setPreview(data);
+      })
+      .catch(() => {
+        setError('사진을 처리하지 못했어요. 다른 이미지를 선택해보세요.');
+      });
   };
 
   const handleSubmit = async (e) => {
@@ -78,6 +73,7 @@ export function CreatePost() {
     e.preventDefault();
     setImageData(null);
     setPreview(null);
+    setError('');
   };
 
   return createElement('div', { class: 'create-page' },

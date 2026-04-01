@@ -164,6 +164,11 @@ export function diff(oldV, newV, patches, idx, path) {
   path    = path    || 'root';
   const cur = idx.v;
 
+  if (oldV && newV && oldV.key !== newV.key) {
+    patches.push({ type: 'REPLACE', index: cur, oldV, newV, path });
+    return patches;
+  }
+
   if (oldV && newV &&
       (oldV.type !== newV.type ||
        (oldV.type === 'element' && oldV.tagName !== newV.tagName))) {
@@ -241,9 +246,9 @@ function flashNode(el) {
 // ── patch ─────────────────────────────────────────────────────────────────────
 export function patch(domRoot, patches) {
   if (!domRoot || !patches || !patches.length) return domRoot;
-  const map = buildIndexMap(domRoot);
   const doc = domRoot.ownerDocument || document;
   let currentRoot = domRoot;
+  let map = buildIndexMap(currentRoot);
 
   for (const p of patches) {
     const target = map.get(p.index);
@@ -257,6 +262,7 @@ export function patch(domRoot, patches) {
         parent.replaceChild(neo, target);
         if (target === currentRoot) currentRoot = neo;
         flashNode(neo);
+        map = buildIndexMap(currentRoot);
         break;
       }
       case 'TEXT': {
@@ -293,16 +299,18 @@ export function patch(domRoot, patches) {
           const prevNode = map.get(p.index - 1);
           const parent = prevNode
             ? (prevNode.nodeType === Node.ELEMENT_NODE ? prevNode : prevNode.parentNode)
-            : domRoot;
+            : currentRoot;
           if (parent) parent.appendChild(neo);
         }
         flashNode(neo);
+        map = buildIndexMap(currentRoot);
         break;
       }
       case 'REMOVE': {
         if (!target) break;
         const parent = target.parentNode;
         if (parent) parent.removeChild(target);
+        map = buildIndexMap(currentRoot);
         break;
       }
     }

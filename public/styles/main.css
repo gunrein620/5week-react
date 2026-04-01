@@ -215,6 +215,9 @@ body {
 .feed-tabs__button:active {
   transform: scale(0.98);
 }
+.feed-panel {
+  min-height: 320px;
+}
 .feed-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
@@ -268,6 +271,7 @@ body {
 .post-card--green { border-top: 3px solid var(--green); }
 .post-card--yellow { border-top: 3px solid var(--yellow); }
 .post-card--red { border-top: 3px solid var(--red); }
+.post-card--archived { border-top: 3px solid #8e8e93; }
 
 .post-card__media {
   position: relative;
@@ -346,6 +350,27 @@ body {
 .post-card__ttl-text--green  { color: var(--green); }
 .post-card__ttl-text--yellow { color: var(--yellow); }
 .post-card__ttl-text--red    { color: var(--red); }
+.post-card__archive-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.post-card__badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #f2f2f7;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+}
+.post-card__meta {
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+}
 
 .post-card__like-btn {
   display: flex;
