@@ -1,6 +1,8 @@
 // ── vdom.js ──────────────────────────────────────────────────────────────────
 // week4 diff/patch 엔진을 ES 모듈로 추출 + 이벤트 위임 시스템 추가
 
+import { trace } from './tracer.js';
+
 export const VOID_TAGS = new Set([
   'area','base','br','col','embed','hr','img','input',
   'link','meta','param','source','track','wbr'
@@ -9,10 +11,14 @@ export const VOID_TAGS = new Set([
 // ── 이벤트 위임 시스템 ────────────────────────────────────────────────────────
 const EVENT_HANDLERS = new Map(); // vdomId → { click: fn, input: fn, ... }
 let nextVdomId = 1;
+let delegationInitialized = false;
 
 const DELEGATED_EVENTS = ['click', 'input', 'change', 'submit', 'keydown', 'keyup'];
 
 function initEventDelegation() {
+  if (delegationInitialized || typeof document === 'undefined') return;
+  delegationInitialized = true;
+
   for (const eventType of DELEGATED_EVENTS) {
     document.addEventListener(eventType, (e) => {
       let target = e.target;
@@ -21,6 +27,11 @@ function initEventDelegation() {
         if (id) {
           const handlers = EVENT_HANDLERS.get(id);
           if (handlers && handlers[eventType]) {
+            trace('ACTION', {
+              eventType,
+              target: describeTarget(target),
+              vdomId: id,
+            });
             handlers[eventType](e);
             break;
           }
@@ -38,6 +49,9 @@ if (typeof document !== 'undefined') {
 export function cleanupHandlers(domRoot) {
   if (!domRoot) return;
   const existingIds = new Set();
+  if (domRoot.nodeType === Node.ELEMENT_NODE && domRoot.hasAttribute('data-vdom-id')) {
+    existingIds.add(domRoot.getAttribute('data-vdom-id'));
+  }
   domRoot.querySelectorAll('[data-vdom-id]').forEach(el => {
     existingIds.add(el.getAttribute('data-vdom-id'));
   });
@@ -159,9 +173,23 @@ export function diffProps(op, np) {
 
 // ── diff ──────────────────────────────────────────────────────────────────────
 export function diff(oldV, newV, patches, idx, path) {
-  patches = patches || [];
-  idx     = idx     || { v: 0 };
-  path    = path    || 'root';
+  const resolvedPatches = patches || [];
+  const resolvedIdx = idx || { v: 0 };
+  const resolvedPath = path || 'root';
+  const isRootCall = resolvedIdx.v === 0 && resolvedPath === 'root';
+  const nextPatches = diffImpl(oldV, newV, resolvedPatches, resolvedIdx, resolvedPath);
+
+  if (isRootCall) {
+    trace('DIFF', {
+      count: nextPatches.length,
+      patches: nextPatches.map(summarizePatch),
+    });
+  }
+
+  return nextPatches;
+}
+
+function diffImpl(oldV, newV, patches, idx, path) {
   const cur = idx.v;
 
   if (oldV && newV && oldV.key !== newV.key) {
@@ -214,7 +242,7 @@ export function diff(oldV, newV, patches, idx, path) {
         patches.push({ type: 'INSERT', index: idx.v, newV: nc[i], path: childPath });
         idx.v += countNodes(nc[i]) - 1;
       } else {
-        diff(oc[i], nc[i], patches, idx, childPath);
+        diffImpl(oc[i], nc[i], patches, idx, childPath);
       }
     }
   }
@@ -245,7 +273,13 @@ function flashNode(el) {
 
 // ── patch ─────────────────────────────────────────────────────────────────────
 export function patch(domRoot, patches) {
-  if (!domRoot || !patches || !patches.length) return domRoot;
+  if (!domRoot || !patches || !patches.length) {
+    trace('PATCH', {
+      count: 0,
+      applied: [],
+    });
+    return domRoot;
+  }
   const doc = domRoot.ownerDocument || document;
   let currentRoot = domRoot;
   let map = buildIndexMap(currentRoot);
@@ -316,6 +350,11 @@ export function patch(domRoot, patches) {
     }
   }
 
+  trace('PATCH', {
+    count: patches.length,
+    applied: patches.map(summarizePatch),
+  });
+
   return currentRoot;
 }
 
@@ -338,4 +377,38 @@ export function deepCopy(obj) {
     }
   }
   return result;
+}
+
+function describeTarget(target) {
+  if (!target || target.nodeType !== Node.ELEMENT_NODE) return null;
+
+  const text = (target.textContent || '').trim().replace(/\s+/g, ' ');
+  return {
+    tagName: target.tagName.toLowerCase(),
+    id: target.id || null,
+    className: target.className || '',
+    text: text.slice(0, 60),
+  };
+}
+
+function summarizePatch(patchEntry) {
+  const summary = {
+    type: patchEntry.type,
+    path: patchEntry.path,
+  };
+
+  if (patchEntry.type === 'TEXT') {
+    summary.from = patchEntry.oldText;
+    summary.to = patchEntry.text;
+  }
+
+  if (patchEntry.type === 'PROPS') {
+    summary.props = Object.keys(patchEntry.propsDiff || {});
+  }
+
+  if (patchEntry.type === 'INSERT' || patchEntry.type === 'REPLACE') {
+    summary.tagName = patchEntry.newV?.tagName || patchEntry.newV?.type || null;
+  }
+
+  return summary;
 }

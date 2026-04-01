@@ -25,6 +25,8 @@ export function PostCard({ post, onUpdate, isArchiveView = false }) {
   useEffect(() => {
     if (!shouldShowTtl) return undefined;
     const timer = setInterval(() => {
+      // 시나리오 트레이싱 중에는 배경 타이머 일시 중지
+      if (window.__dtPauseTimers) return;
       setTtl(prev => {
         const next = prev - 1;
         return next;

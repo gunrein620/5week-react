@@ -38,6 +38,8 @@ export function Feed() {
   // useEffect + setInterval: cleanup으로 타이머 정리
   useEffect(() => {
     const timer = setInterval(() => {
+      // 시나리오 트레이싱 중에는 배경 폴링 일시 중지
+      if (window.__dtPauseTimers) return;
       api.get(`/api/posts?username=${encodeURIComponent(username)}`).then(data => {
         syncPosts(data); // 서버 TTL로 갱신 → diff → patch (만료된 포스트 REMOVE)
       });

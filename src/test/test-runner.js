@@ -13,6 +13,22 @@ let mountedContainer = null;
 let runLocked = false;
 let runnerStatus = 'Run All 또는 각 테스트의 Run 버튼으로 실행하세요.';
 
+// ── 외부 UI 업데이트 리스너 (test-panel.js 등에서 사용) ────────────────────────
+const updateListeners = [];
+
+export function addUpdateListener(fn) {
+  updateListeners.push(fn);
+}
+
+export function removeUpdateListener(fn) {
+  const idx = updateListeners.indexOf(fn);
+  if (idx !== -1) updateListeners.splice(idx, 1);
+}
+
+export function getSuites() {
+  return suites;
+}
+
 // ── 유틸 ───────────────────────────────────────────────────────────────────────
 function deepEqual(a, b) {
   if (a === b) return true;
@@ -481,16 +497,20 @@ export function renderUI(container) {
 }
 
 export function refreshUI(container = mountedContainer) {
-  if (!container) return;
-  mountedContainer = container;
+  if (container) {
+    mountedContainer = container;
 
-  container.innerHTML = `
-    ${renderGuideHTML()}
-    <div id="stats-bar" style="display:flex;gap:16px;flex-wrap:wrap;font-size:14px;font-weight:700;padding:14px 16px;background:#171717;border-radius:12px;margin-bottom:18px"></div>
-    <div id="suite-list">${suites.map((suite, suiteIndex) => renderSuiteHTML(suite, suiteIndex)).join('')}</div>
-  `;
+    container.innerHTML = `
+      ${renderGuideHTML()}
+      <div id="stats-bar" style="display:flex;gap:16px;flex-wrap:wrap;font-size:14px;font-weight:700;padding:14px 16px;background:#171717;border-radius:12px;margin-bottom:18px"></div>
+      <div id="suite-list">${suites.map((suite, suiteIndex) => renderSuiteHTML(suite, suiteIndex)).join('')}</div>
+    `;
 
-  renderStats(container);
-  attachActionHandlers(container);
-  syncRunnerChrome();
+    renderStats(container);
+    attachActionHandlers(container);
+    syncRunnerChrome();
+  }
+
+  // 패널 등 외부 리스너에도 알림 (container 없어도 실행)
+  updateListeners.forEach(fn => fn());
 }

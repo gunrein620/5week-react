@@ -15,7 +15,9 @@ export function App() {
   const route = getRoute();
   const username = localStorage.getItem('username');
   const isLoggedIn = Boolean(username);
-  const effectiveRoute = isLoggedIn ? route : '#/login';
+  const effectiveRoute = isLoggedIn
+    ? (route === '#/login' ? '#/feed' : route)
+    : '#/login';
 
   useEffect(() => {
     let cancelled = false;
@@ -42,6 +44,10 @@ export function App() {
   // 비로그인 사용자는 항상 로그인 화면 트리를 먼저 안정적으로 렌더한다.
   if (!isLoggedIn && route !== '#/login') {
     queueMicrotask(() => navigate('#/login'));
+  }
+
+  if (isLoggedIn && route === '#/login') {
+    queueMicrotask(() => navigate('#/feed'));
   }
 
   if (isLoggedIn && !authReady) {

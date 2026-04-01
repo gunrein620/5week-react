@@ -79,7 +79,7 @@
 <div id="app-header">
   <div>
     <h1>⚡ Flicker Test Runner</h1>
-    <div class="subtitle">Run All + 개별 Run 지원 · 내부 동작을 설명하는 화이트박스 테스트</div>
+    <div class="subtitle">Run All + 개별 Run 지원 · 단위 테스트 19개 + 기능 테스트 12개</div>
   </div>
   <div id="controls">
     <span id="runner-status">Run All 또는 각 테스트의 Run 버튼으로 실행하세요.</span>
@@ -96,8 +96,8 @@
   } from '/src/test/test-runner.js';
 
   // 테스트 파일 import (사이드이펙트 — describe/it 등록)
-  import '/src/test/hook-tests.js';
-  import '/src/test/integration-tests.js';
+  import '/src/test/unit-tests.js';
+  import '/src/test/feature-tests.js';
 
   const container = document.getElementById('result-container');
   const runBtn    = document.getElementById('run-btn');
