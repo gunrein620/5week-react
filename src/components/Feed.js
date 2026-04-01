@@ -9,7 +9,6 @@ export function Feed() {
   beginComponent('Feed');
   const [livePosts, setLivePosts] = useState([]);
   const [myPosts, setMyPosts] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('live');
   const username = localStorage.getItem('username') || '';
 
@@ -30,7 +29,6 @@ export function Feed() {
     api.get(`/api/posts?username=${encodeURIComponent(username)}`)
       .then(data => {
         syncPosts(data);
-        setLoading(false);
       });
   }, [username]);
 
@@ -59,13 +57,6 @@ export function Feed() {
   const emptySub = isMineTab
     ? '새 순간을 공유하면 여기서 따로 모아볼 수 있어요'
     : '가장 먼저 순간을 남겨보세요';
-
-  if (loading) {
-    return createElement('div', { class: 'feed-loading' },
-      createElement('div', { class: 'spinner' }),
-      createElement('p', {}, '불러오는 중...')
-    );
-  }
 
   return createElement('section', { class: 'feed-page' },
     createElement('div', { class: 'feed-tabs', role: 'tablist', 'aria-label': '피드 보기 전환' },
