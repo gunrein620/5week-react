@@ -408,10 +408,51 @@
   color: #9ca3af;
   font-size: 12px;
   line-height: 1.6;
+  white-space: pre-line;
 }
 
 .dt-entry-detail .dt-tree {
   color: #4b5563;
+}
+
+.dt-value-expand {
+  display: inline-block;
+  margin-left: 8px;
+  vertical-align: top;
+}
+
+.dt-value-expand > summary {
+  display: inline-block;
+  cursor: pointer;
+  color: #60a5fa;
+  font-size: 11px;
+  list-style: none;
+}
+
+.dt-value-expand > summary::-webkit-details-marker {
+  display: none;
+}
+
+.dt-value-expand > summary::before {
+  content: '▸ ';
+  color: #4b5563;
+}
+
+.dt-value-expand[open] > summary::before {
+  content: '▾ ';
+}
+
+.dt-value-expand > pre {
+  margin: 6px 0 0 0;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid #2d2d50;
+  border-radius: 6px;
+  color: #cbd5e1;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 220px;
+  overflow: auto;
 }
 
 .dt-entry-sep {

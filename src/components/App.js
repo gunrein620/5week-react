@@ -241,7 +241,8 @@ export function App() {
   // TTL 카운트다운(1초마다)에서는 cache-hit → 정렬 생략
   const popularPosts = useMemo(
     () => [...livePosts].sort((a, b) => b.likes - a.likes),
-    [livePosts]
+    [livePosts],
+    '인기 탭용 게시글 정렬 (likes 내림차순)'
   );
 
   let page;

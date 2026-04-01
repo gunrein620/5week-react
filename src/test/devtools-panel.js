@@ -42,6 +42,8 @@ function getTypeInfo(type) {
 // 대용량/노이즈 데이터 정제 헬퍼
 const IMAGE_KEYS = new Set(['imageData', 'preview', 'base64', 'dataUrl', 'src']);
 const MAX_STR_LEN = 100;
+const MAX_PREVIEW_ITEMS = 3;
+const MAX_EXPANDABLE_JSON_LEN = 160;
 
 function sanitizeValue(value, key = '') {
   if (value === null || value === undefined) return value;
@@ -57,15 +59,21 @@ function sanitizeValue(value, key = '') {
 
   if (Array.isArray(value)) {
     if (value.length === 0) return '[] (0개)';
-    const first = value[0];
-    const summary = first && typeof first === 'object'
-      ? JSON.stringify(sanitizeObject(first)).slice(0, 80)
-      : String(first).slice(0, 80);
-    return `[배열 ${value.length}개] 첫 항목: ${summary}`;
+    const preview = value
+      .slice(0, MAX_PREVIEW_ITEMS)
+      .map((item) => formatInlinePreview(item))
+      .join(', ');
+    return `[배열 ${value.length}개] ${preview}${value.length > MAX_PREVIEW_ITEMS ? ', …' : ''}`;
   }
 
   if (typeof value === 'object') {
-    return sanitizeObject(value);
+    const entries = Object.entries(value);
+    if (entries.length === 0) return '{} (0개)';
+    const preview = entries
+      .slice(0, MAX_PREVIEW_ITEMS)
+      .map(([k, v]) => `${shortenKey(k)}:${formatInlinePreview(v, k)}`)
+      .join(', ');
+    return `[객체 ${entries.length}개 키] ${preview}${entries.length > MAX_PREVIEW_ITEMS ? ', …' : ''}`;
   }
 
   return value;
@@ -88,18 +96,97 @@ function sanitizeObject(obj) {
   return result;
 }
 
+function sanitizeValueDeep(value, key = '') {
+  if (value === null || value === undefined) return value;
+
+  if (IMAGE_KEYS.has(key) || (typeof value === 'string' && value.startsWith('data:'))) {
+    return `[image omitted, length: ${String(value).length}]`;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeValueDeep(item));
+  }
+
+  if (typeof value === 'object') {
+    const result = {};
+    for (const [childKey, childValue] of Object.entries(value)) {
+      result[childKey] = sanitizeValueDeep(childValue, childKey);
+    }
+    return result;
+  }
+
+  return value;
+}
+
+function shortenKey(key) {
+  if (!key) return '';
+  return String(key).length > 12 ? `${String(key).slice(0, 8)}…` : String(key);
+}
+
+function formatInlinePreview(value, key = '') {
+  const sanitized = sanitizeValue(value, key);
+
+  if (sanitized === null || sanitized === undefined) return 'null';
+  if (typeof sanitized === 'string') return sanitized;
+  if (typeof sanitized === 'number' || typeof sanitized === 'boolean') return String(sanitized);
+  if (Array.isArray(value)) return `[배열 ${value.length}개]`;
+  if (typeof value === 'object') return `[객체 ${Object.keys(value).length}개 키]`;
+  return String(sanitized);
+}
+
+function shouldRenderExpandable(value, key = '') {
+  if (value === null || value === undefined) return false;
+  if (IMAGE_KEYS.has(key) || (typeof value === 'string' && value.startsWith('data:'))) return false;
+  if (typeof value === 'string') return value.length > MAX_STR_LEN;
+  if (Array.isArray(value)) {
+    return value.length > MAX_PREVIEW_ITEMS || JSON.stringify(sanitizeValueDeep(value)).length > MAX_EXPANDABLE_JSON_LEN;
+  }
+  if (typeof value === 'object') {
+    return Object.keys(value).length > MAX_PREVIEW_ITEMS || JSON.stringify(sanitizeValueDeep(value, key)).length > MAX_EXPANDABLE_JSON_LEN;
+  }
+  return false;
+}
+
+function formatExpandedValue(value, key = '') {
+  const sanitized = sanitizeValueDeep(value, key);
+  if (sanitized === null || sanitized === undefined) return 'null';
+  if (typeof sanitized === 'string') return sanitized;
+  if (typeof sanitized === 'number' || typeof sanitized === 'boolean') return String(sanitized);
+  return JSON.stringify(sanitized, null, 2);
+}
+
+function renderValueHtml(value, key = '') {
+  const sanitized = sanitizeValue(value, key);
+
+  let summaryHtml;
+  if (sanitized === null || sanitized === undefined) {
+    summaryHtml = '<span style="color:#4b5563">null</span>';
+  } else if (typeof sanitized === 'object') {
+    summaryHtml = `<span style="color:#9ca3af">${esc(JSON.stringify(sanitized))}</span>`;
+  } else {
+    summaryHtml = `<span style="color:#e2e8f0">${esc(String(sanitized))}</span>`;
+  }
+
+  if (!shouldRenderExpandable(value, key)) {
+    return summaryHtml;
+  }
+
+  return `
+    <span class="dt-value-summary">${summaryHtml}</span>
+    <details class="dt-value-expand">
+      <summary>전체 보기</summary>
+      <pre>${esc(formatExpandedValue(value, key))}</pre>
+    </details>
+  `;
+}
+
 function formatDetail(type, detail) {
   if (!detail || typeof detail !== 'object') return '';
 
   const rows = [];
   const tree = (label, value, isLast = false) => {
     const prefix = isLast ? '└─' : '├─';
-    const sanitized = sanitizeValue(value, label);
-    const valStr = sanitized === null || sanitized === undefined
-      ? '<span style="color:#4b5563">null</span>'
-      : typeof sanitized === 'object'
-        ? `<span style="color:#9ca3af">${esc(JSON.stringify(sanitized))}</span>`
-        : `<span style="color:#e2e8f0">${esc(String(sanitized))}</span>`;
+    const valStr = renderValueHtml(value, label);
     rows.push(`<span style="color:#4b5563">${prefix}</span> <span style="color:#9ca3af">${esc(label)}</span> : ${valStr}`);
   };
 
@@ -127,6 +214,19 @@ function formatDetail(type, detail) {
         if (bailout !== undefined) tree('bailout', bailout, true);
       }
       if (deps !== undefined) tree('deps', JSON.stringify(deps), true);
+      break;
+    }
+
+    case 'MEMO': {
+      const { hook, phase, idx, label, deps, prevDeps, value, reason } = detail;
+      tree('hook', hook || 'useMemo');
+      if (label) tree('label', label);
+      if (phase) tree('phase', phase);
+      if (idx !== undefined) tree('hookIndex', idx);
+      if (prevDeps !== undefined) tree('prevDeps', prevDeps);
+      if (deps !== undefined) tree('deps', deps);
+      if (reason) tree('reason', reason);
+      if (value !== undefined) tree('cachedValue', value, true);
       break;
     }
 
@@ -274,6 +374,19 @@ function getSummary(type, detail) {
         return `<span style="color:#fbbf24">useState</span> <span style="color:#9ca3af">호출</span>`;
       }
       return `<span style="color:#fbbf24">${esc(detail.hook || 'hook')}</span> <span style="color:#9ca3af">${esc(detail.phase || '')}</span>`;
+    case 'MEMO': {
+      const labelPart = detail.label ? ` <span style="color:#99f6e4">${esc(detail.label)}</span>` : '';
+      if (detail.phase === 'cache-hit') {
+        return `<span style="color:#2dd4bf">useMemo</span>${labelPart} <span style="color:#9ca3af">cache-hit</span>`;
+      }
+      if (detail.phase === 'recompute') {
+        return `<span style="color:#2dd4bf">useMemo</span>${labelPart} <span style="color:#9ca3af">recompute</span>`;
+      }
+      if (detail.phase === 'init') {
+        return `<span style="color:#2dd4bf">useMemo</span>${labelPart} <span style="color:#9ca3af">초기 계산</span>`;
+      }
+      return `<span style="color:#2dd4bf">useMemo</span>${labelPart} <span style="color:#9ca3af">${esc(detail.phase || '')}</span>`;
+    }
     case 'STATE':
       if (detail.reason === 'scheduleRender') {
         return `<span style="color:#9ca3af">상태 변경 감지 → scheduleRender()</span>`;
