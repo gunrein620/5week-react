@@ -73,14 +73,14 @@ export function Feed() {
         role: 'tab',
         'aria-selected': activeTab === 'live' ? 'true' : 'false',
         onClick: () => setActiveTab('live'),
-      }, `실시간 올라오는 글 ${livePosts.length}`),
+      }, '실시간', createElement('span', { class: 'tab-badge' }, String(livePosts.length))),
       createElement('button', {
         class: `feed-tabs__button${activeTab === 'mine' ? ' feed-tabs__button--active' : ''}`,
         type: 'button',
         role: 'tab',
         'aria-selected': activeTab === 'mine' ? 'true' : 'false',
         onClick: () => setActiveTab('mine'),
-      }, `내가 올린 글 ${myPosts.length}`)
+      }, '내 게시물', createElement('span', { class: 'tab-badge' }, String(myPosts.length)))
     ),
     createElement('div', {
       class: isMineTab ? 'feed-panel feed-panel--mine' : 'feed-panel feed-panel--live',
@@ -91,7 +91,7 @@ export function Feed() {
             class: 'feed-empty',
             'data-key': isMineTab ? 'mine-empty' : 'live-empty',
           },
-            createElement('div', { class: 'feed-empty__icon' }, isMineTab ? '🫥' : '🔥'),
+            createElement('div', { class: 'feed-empty__icon' }),
             createElement('p', { class: 'feed-empty__title' }, emptyTitle),
             createElement('p', { class: 'feed-empty__sub' }, emptySub)
           )

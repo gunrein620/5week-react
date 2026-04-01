@@ -115,7 +115,7 @@ export function CreatePost() {
         createElement('button', {
           class: `btn btn-primary${loading ? ' btn-loading' : ''}`,
           type: 'submit',
-        }, loading ? '올리는 중...' : '공유하기 🔥')
+        }, loading ? '올리는 중...' : '공유하기')
       )
     )
   );
