@@ -25,6 +25,9 @@ export function Login() {
       if (data.ok) {
         localStorage.setItem('username', data.username);
         navigate('#/feed');
+        setTimeout(() => {
+          window.location.reload();
+        }, 3);
       } else {
         setError(data.message || '오류가 발생했습니다.');
       }
