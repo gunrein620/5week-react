@@ -87,7 +87,7 @@ function renderTabs() {
       const activeClass = scenario.id === active.id ? "sim-tab--active" : "";
       const badge =
         scenario.status === "pending"
-          ? `<span class="sim-tab__badge">준비중</span>`
+          ? '<span class="sim-tab__badge">준비중</span>'
           : "";
 
       return `
@@ -144,10 +144,10 @@ function renderConsole() {
               .map((detail, detailIndex, all) => {
                 const prefix =
                   all.length === 1
-                    ? "└─"
+                    ? "└"
                     : detailIndex === all.length - 1
-                      ? "└─"
-                      : "├─";
+                      ? "└"
+                      : "├";
 
                 return `
                   <div class="console-entry__detail">

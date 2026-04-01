@@ -47,10 +47,7 @@ const SCENARIO_META = {
   },
 };
 
-const likeRuntime = {
-  renderCount: 0,
-};
-
+const likeRuntime = { renderCount: 0 };
 const timerRuntime = {
   renderCount: 0,
   currentTimerId: "timer-10",
@@ -174,14 +171,17 @@ function LikeScenario() {
         (patch) => patch.type !== "HANDLERS"
       );
 
-      await bridge.playSequence("like", buildLikeSequence({
-        hookKey,
-        before,
-        after,
-        patches,
-        beforeRenderCount,
-        afterRenderCount,
-      }));
+      await bridge.playSequence(
+        "like",
+        buildLikeSequence({
+          hookKey,
+          before,
+          after,
+          patches,
+          beforeRenderCount,
+          afterRenderCount,
+        })
+      );
     });
   };
 
@@ -242,15 +242,18 @@ function TimerScenario() {
         (patch) => patch.type !== "HANDLERS"
       );
 
-      await bridge.playSequence("timer", buildTimerSequence({
-        hookKey,
-        effectKey,
-        before,
-        after,
-        patches,
-        beforeRenderCount,
-        afterRenderCount,
-      }));
+      await bridge.playSequence(
+        "timer",
+        buildTimerSequence({
+          hookKey,
+          effectKey,
+          before,
+          after,
+          patches,
+          beforeRenderCount,
+          afterRenderCount,
+        })
+      );
     });
   };
 
@@ -275,14 +278,14 @@ function MemoScenario() {
       await bridge.playSequence("memo", [
         {
           label: "CHECK",
-          title: "useMemo 시나리오를 확인했습니다",
-          details: ["현재 hooks.js export를 검사했습니다."],
+          title: "useMemo 구현 여부를 확인합니다",
+          details: ["현재 hooks.js export를 읽어 준비 상태를 점검했습니다."],
           highlightTargets: [".sim-memo-card"],
         },
         {
           label: "RESULT",
           title: "현재 엔진에는 useMemo가 없습니다",
-          details: ["같은 deps 재사용 시뮬레이션은 구현 후 연결됩니다."],
+          details: ["구현이 들어오면 같은 deps 재사용과 재계산 흐름을 붙일 예정입니다."],
           highlightTargets: [".sim-memo-card"],
         },
       ]);
@@ -293,7 +296,7 @@ function MemoScenario() {
       {
         label: "READY",
         title: "useMemo가 구현되어 시뮬레이션을 확장할 수 있습니다",
-        details: ["같은 정렬 계산 재사용 흐름을 여기에 연결하면 됩니다."],
+        details: ["같은 계산 재사용과 deps 변경 시 재계산 흐름을 연결하면 됩니다."],
         highlightTargets: [".sim-memo-card"],
       },
     ]);
@@ -305,15 +308,15 @@ function MemoScenario() {
     createElement(
       "div",
       { class: "sim-memo-card__badge" },
-      hasUseMemo ? "연결 가능" : "준비중"
+      hasUseMemo ? "확장 가능" : "준비중"
     ),
-    createElement("h3", { class: "sim-memo-card__title" }, "정렬 캐시 시뮬레이션"),
+    createElement("h3", { class: "sim-memo-card__title" }, "정렬 캐시 시뮬레이터"),
     createElement(
       "p",
       { class: "sim-memo-card__copy" },
       hasUseMemo
-        ? "같은 정렬 계산을 재사용하는 흐름을 여기에 붙일 수 있습니다."
-        : "현재 엔진에는 useMemo가 없어 이 자리는 안내용으로만 표시합니다."
+        ? "같은 정렬 계산을 다시 쓰는 흐름을 이 카드에서 이어 붙일 수 있습니다."
+        : "현재 엔진에는 useMemo가 없어 안내 흐름만 먼저 보여줍니다."
     ),
     createElement(
       "button",
@@ -372,7 +375,7 @@ function buildLikeInteractiveTree(post, onLike) {
           {
             class: `post-card__like-btn sim-like-button${post.liked ? " post-card__like-btn--liked" : ""}`,
             onClick: onLike,
-            title: "좋아요 (+5초)",
+            title: "좋아요",
           },
           createElement("span", { class: "post-card__like-icon" }, "♥"),
           createElement("span", { class: "post-card__like-count sim-like-count" }, String(post.likeCount))
@@ -511,7 +514,7 @@ function buildLikeSequence({ hookKey, before, after, patches, beforeRenderCount,
   return [
     {
       label: "ACTION",
-      title: `👍 사용자가 게시물 #${before.id}에 좋아요를 눌렀습니다`,
+      title: `사용자가 게시물 #${before.id}에 좋아요를 눌렀습니다`,
       details: [],
       highlightTargets: [".sim-like-button"],
     },
@@ -522,59 +525,50 @@ function buildLikeSequence({ hookKey, before, after, patches, beforeRenderCount,
         "hookIndex : 0",
         `저장 위치 : ${shortSlot(hookKey, "state:0")}`,
         `이전 state : ${formatObject({ like_count: before.likeCount, ttl: before.ttl })}`,
-        `새 state   : ${formatObject({ like_count: after.likeCount, ttl: after.ttl })}`,
+        `새 state : ${formatObject({ like_count: after.likeCount, ttl: after.ttl })}`,
       ],
       highlightTargets: [".sim-post-card"],
     },
     {
       label: "STATE",
-      title: "상태 변경 감지 -> 리렌더링 예약",
+      title: "상태 변경 감지 후 다시 렌더를 예약합니다",
       details: [
-        `변경된 키 : like_count (${before.likeCount} -> ${after.likeCount})`,
-        `변경된 키 : ttl (${before.ttl} -> ${after.ttl})`,
+        `변경된 값 : like_count (${before.likeCount} -> ${after.likeCount})`,
+        `변경된 값 : ttl (${before.ttl} -> ${after.ttl})`,
       ],
       highlightTargets: [".sim-like-count", ".sim-ttl-value"],
     },
     {
       label: "UPDATE",
-      title: "renderApp() 호출",
+      title: "컴포넌트가 다시 실행됩니다",
       details: [
         "컴포넌트 : <LikeScenario />",
-        `추가 render : ${Math.max(0, afterRenderCount - beforeRenderCount)}회`,
+        `추가 render 수 : ${Math.max(0, afterRenderCount - beforeRenderCount)}회`,
       ],
       highlightTargets: [".sim-post-card"],
     },
     {
-      label: "VDOM",
-      title: "새 Virtual DOM 생성 완료",
-      details: [
-        "변경 후보 : .sim-like-count",
-        "변경 후보 : .sim-ttl-value",
-      ],
-      highlightTargets: [".sim-like-count", ".sim-ttl-value"],
-    },
-    {
       label: "DIFF",
-      title: "이전 VDOM과 새 VDOM 비교",
+      title: "이전 화면과 새 화면을 비교합니다",
       details: [
-        `변경 : like-count "${before.likeCount}" -> "${after.likeCount}"`,
-        `변경 : ttl "${before.ttl}s" -> "${after.ttl}s"`,
+        `좋아요 수 : ${before.likeCount} -> ${after.likeCount}`,
+        `TTL : ${before.ttl}s -> ${after.ttl}s`,
       ],
       highlightTargets: [".sim-like-count", ".sim-ttl-value"],
     },
     {
       label: "PATCH",
-      title: "실제 DOM 업데이트",
+      title: "실제 DOM에 바뀐 부분만 반영합니다",
       details: [
-        `TEXT/PROPS 패치 : ${countMeaningfulPatches(patches)}개`,
-        "업데이트 : .sim-like-count, .sim-ttl-value",
+        `의미 있는 패치 수 : ${countMeaningfulPatches(patches)}개`,
+        "반영 대상 : 좋아요 수, TTL 텍스트",
       ],
       highlightTargets: [".sim-like-count", ".sim-ttl-value"],
     },
     {
       label: "RENDER",
-      title: "렌더링 완료",
-      details: [`화면 결과 : 좋아요 ${after.likeCount}, TTL ${after.ttl}s`],
+      title: "화면이 새 상태로 바뀌었습니다",
+      details: [`최종 결과 : 좋아요 ${after.likeCount}, TTL ${after.ttl}s`],
       highlightTargets: [".sim-post-card"],
     },
   ];
@@ -584,7 +578,7 @@ function buildTimerSequence({ hookKey, effectKey, before, after, patches, before
   return [
     {
       label: "ACTION",
-      title: `⏱ 사용자가 타이머를 ${before.ttl}s에서 ${after.ttl}s로 바꿨습니다`,
+      title: `타이머를 ${before.ttl}s에서 ${after.ttl}s로 바꿉니다`,
       details: [],
       highlightTargets: [".sim-timer-button"],
     },
@@ -595,22 +589,22 @@ function buildTimerSequence({ hookKey, effectKey, before, after, patches, before
         "hookIndex : 0",
         `저장 위치 : ${shortSlot(hookKey, "state:0")}`,
         `이전 state : ${before.ttl}`,
-        `새 state   : ${after.ttl}`,
+        `새 state : ${after.ttl}`,
       ],
       highlightTargets: [".sim-timer-ttl"],
     },
     {
       label: "STATE",
-      title: "상태 변경 감지 -> 리렌더링 예약",
+      title: "TTL 변경으로 다시 렌더를 예약합니다",
       details: [
         `변경된 값 : ttl (${before.ttl} -> ${after.ttl})`,
-        `추가 render : ${Math.max(0, afterRenderCount - beforeRenderCount)}회`,
+        `추가 render 수 : ${Math.max(0, afterRenderCount - beforeRenderCount)}회`,
       ],
       highlightTargets: [".sim-timer-ttl"],
     },
     {
       label: "EFFECT",
-      title: "useEffect 의존성 변경 감지",
+      title: "useEffect가 deps 변경을 감지합니다",
       details: [
         `저장 위치 : ${shortSlot(effectKey, "effect:1")}`,
         `deps : [${before.ttl}] -> [${after.ttl}]`,
@@ -619,29 +613,29 @@ function buildTimerSequence({ hookKey, effectKey, before, after, patches, before
     },
     {
       label: "CLEANUP",
-      title: "이전 timer 정리",
+      title: "이전 timer를 정리합니다",
       details: [`정리된 timer : ${after.cleanupId}`],
       highlightTargets: [".sim-timer-cleanup"],
     },
     {
       label: "EFFECT",
-      title: "새 effect 실행",
+      title: "새 effect를 다시 등록합니다",
       details: [`새 timer : ${after.timerId}`],
       highlightTargets: [".sim-timer-id"],
     },
     {
       label: "PATCH",
-      title: "실제 DOM 반영",
+      title: "바뀐 DOM만 다시 반영합니다",
       details: [
-        `TEXT/PROPS 패치 : ${countMeaningfulPatches(patches)}개`,
-        "업데이트 : .sim-timer-ttl, .sim-timer-id",
+        `의미 있는 패치 수 : ${countMeaningfulPatches(patches)}개`,
+        "반영 대상 : TTL, timer 표시",
       ],
       highlightTargets: [".sim-timer-ttl", ".sim-timer-id"],
     },
     {
       label: "RENDER",
-      title: "렌더링 완료",
-      details: [`화면 결과 : ${after.ttl}s / ${after.timerId}`],
+      title: "타이머 화면이 새 상태가 됩니다",
+      details: [`최종 결과 : ${after.ttl}s / ${after.timerId}`],
       highlightTargets: [".sim-timer-card"],
     },
   ];

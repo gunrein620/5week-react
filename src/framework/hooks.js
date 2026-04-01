@@ -13,6 +13,11 @@ let hookIndex = 0;
 // 대기 중인 effect들
 const pendingEffects = []; // { key, callback, deps, prevDeps, prevCleanup }
 const effectStore = new Map(); // key → { deps, cleanup }
+let lastChangedStateKey = null;
+
+export function getLastChangedStateKey() {
+  return lastChangedStateKey;
+}
 
 export function setRenderFn(fn) {
   renderFn = fn;
@@ -54,6 +59,7 @@ export function useState(initialValue) {
 
     if (resolved === hookStore.get(key)) return; // 동일하면 렌더 생략
     hookStore.set(key, resolved);
+    lastChangedStateKey = key;
     scheduleRender();
   };
 
