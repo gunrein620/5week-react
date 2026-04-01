@@ -428,9 +428,7 @@ function summarizePatch(patchEntry) {
 
 function shouldCountNode(node) {
   if (!node) return false;
-  if (node.nodeType === Node.TEXT_NODE) {
-    return (node.textContent || '').trim().length > 0;
-  }
+  if (node.nodeType === Node.TEXT_NODE) return true;
   return node.nodeType === Node.ELEMENT_NODE;
 }
 

@@ -5,6 +5,7 @@
 import { createElement } from '../framework/vdom.js';
 import { useState, useEffect, useMemo } from '../framework/hooks.js';
 import { getRoute, navigate } from '../framework/router.js';
+import { trace, runWithTraceCause } from '../framework/tracer.js';
 import { Login } from './Login.js';
 import { Feed } from './Feed.js';
 import { CreatePost } from './CreatePost.js';
@@ -52,13 +53,13 @@ export function App() {
       .catch(() => null)
       .finally(() => { if (!cancelled) setAuthReady(true); });
     return () => { cancelled = true; };
-  }, [username]);
+  }, [username], '인증 확인');
 
   // ── 피드 초기 로드 effect ─────────────────────────────────────────────────
   useEffect(() => {
     api.get(`/api/posts?username=${encodeURIComponent(username || '')}`)
       .then(syncPosts);
-  }, [username]);
+  }, [username], '피드 초기 로드');
 
   // ── 피드 3초 폴링 effect ──────────────────────────────────────────────────
   useEffect(() => {
@@ -68,22 +69,44 @@ export function App() {
         .then(syncPosts);
     }, 3000);
     return () => clearInterval(timer);
-  }, [username]);
+  }, [username], '피드 동기화 타이머');
 
   // ── TTL 1초 카운트다운 effect ─────────────────────────────────────────────
   useEffect(() => {
     const timer = setInterval(() => {
       if (window.__dtPauseTimers) return;
-      setPostTtls(prev => {
-        const next = {};
-        for (const [id, ttl] of Object.entries(prev)) {
-          next[id] = Math.max(0, ttl - 1);
-        }
-        return next;
+      runWithTraceCause('TTL 카운트다운 타이머', () => {
+        trace('EFFECT', {
+          hook: 'useEffect',
+          phase: 'timer-tick',
+          label: 'TTL 카운트다운',
+        });
+        setPostTtls(prev => {
+          const next = {};
+          for (const [id, ttl] of Object.entries(prev)) {
+            next[id] = Math.max(0, ttl - 1);
+          }
+          return next;
+        });
       });
     }, 1000);
     return () => clearInterval(timer);
-  }, []);
+  }, [], 'TTL 카운트다운');
+
+  useEffect(() => {
+    async function refreshPostsForDevtools() {
+      const data = await api.get(`/api/posts?username=${encodeURIComponent(username || '')}`);
+      syncPosts(data);
+      return data;
+    }
+
+    window.__dtRefreshPosts = refreshPostsForDevtools;
+    return () => {
+      if (window.__dtRefreshPosts === refreshPostsForDevtools) {
+        delete window.__dtRefreshPosts;
+      }
+    };
+  }, [username], '테스트용 피드 동기화');
 
   // ── 서버 데이터 동기화 ─────────────────────────────────────────────────────
   function syncPosts(data) {
@@ -126,7 +149,12 @@ export function App() {
 
   const handleLoginSubmit = async (e) => {
     e.preventDefault();
-    const name = loginUsername.trim();
+    const form = e.target?.closest?.('form');
+    const submittedName = form?.querySelector?.('input[type="text"]')?.value ?? loginUsername;
+    const name = submittedName.trim();
+    if (submittedName !== loginUsername) {
+      setLoginUsername(submittedName);
+    }
     if (!name) { setLoginError('닉네임을 입력해주세요.'); return; }
     setLoginLoading(true);
     setLoginError('');

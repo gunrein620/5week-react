@@ -112,7 +112,7 @@ function formatDetail(type, detail) {
     }
 
     case 'HOOK': {
-      const { hook, phase, hookIndex, key, value, prev, next, deps, bailout } = detail;
+      const { hook, phase, hookIndex, key, value, prev, next, deps, bailout, cause } = detail;
       tree('hook', hook);
       if (phase) tree('phase', phase);
       if (hookIndex !== undefined) tree('hookIndex', hookIndex);
@@ -123,6 +123,7 @@ function formatDetail(type, detail) {
       if (phase === 'set') {
         if (prev !== undefined) tree('이전 state', prev);
         if (next !== undefined) tree('새 state', next);
+        if (cause) tree('origin', cause);
         if (bailout !== undefined) tree('bailout', bailout, true);
       }
       if (deps !== undefined) tree('deps', JSON.stringify(deps), true);
@@ -130,8 +131,9 @@ function formatDetail(type, detail) {
     }
 
     case 'STATE': {
-      const { reason, prev, next, changedKeys } = detail;
+      const { reason, prev, next, changedKeys, cause } = detail;
       if (reason) tree('reason', reason);
+      if (cause) tree('cause', cause);
       if (changedKeys?.length) tree('changedKeys', changedKeys.map(k => k.split(':').pop()).join(', '));
       if (prev !== undefined) tree('이전', prev);
       if (next !== undefined) tree('새 값', next, true);
@@ -139,13 +141,18 @@ function formatDetail(type, detail) {
     }
 
     case 'EFFECT': {
-      const { phase, key, deps, prevDeps, hasCleanup, reason } = detail;
+      const { phase, key, deps, prevDeps, hasCleanup, reason, label } = detail;
+      if (label) tree('label', label);
       tree('phase', phase);
-      if (key) tree('key', key.split(':').slice(-2).join(':'));
-      if (deps !== undefined) tree('deps', JSON.stringify(deps));
-      if (prevDeps !== undefined) tree('prevDeps', JSON.stringify(prevDeps));
-      if (hasCleanup !== undefined) tree('cleanup', hasCleanup ? '있음' : '없음', !reason);
-      if (reason) tree('reason', reason, true);
+      if (phase === 'timer-tick') {
+        tree('note', 'setInterval 콜백 — useEffect [] 에 의해 마운트 시 등록됨', true);
+      } else {
+        if (key) tree('key', key.split(':').slice(-2).join(':'));
+        if (deps !== undefined) tree('deps', JSON.stringify(deps));
+        if (prevDeps !== undefined) tree('prevDeps', JSON.stringify(prevDeps));
+        if (hasCleanup !== undefined) tree('cleanup', hasCleanup ? '있음' : '없음', !reason);
+        if (reason) tree('reason', reason, true);
+      }
       break;
     }
 
@@ -185,14 +192,16 @@ function formatDetail(type, detail) {
     }
 
     case 'RENDER': {
-      const { count, duration } = detail;
-      tree('변경 노드', `${count}개`);
+      const { duration } = detail;
+      const patchCount = detail.patchCount ?? detail.count ?? 0;
+      tree('변경 노드', `${patchCount}개`);
       tree('소요 시간', `${duration}ms`, true);
       break;
     }
 
     case 'UPDATE': {
-      tree('component', detail.component, true);
+      tree('component', detail.component, !detail.cause);
+      if (detail.cause) tree('cause', detail.cause, true);
       break;
     }
 
@@ -269,11 +278,17 @@ function getSummary(type, detail) {
       if (detail.reason === 'scheduleRender') {
         return `<span style="color:#9ca3af">상태 변경 감지 → scheduleRender()</span>`;
       }
+      if (detail.cause) {
+        return `<span style="color:#9ca3af">상태 변경 감지</span> <span style="color:#6b7280">(${esc(detail.cause)})</span>`;
+      }
       return `<span style="color:#9ca3af">상태 변경 감지</span>`;
-    case 'EFFECT':
-      if (detail.phase === 'run') return `<span style="color:#f97316">useEffect</span> <span style="color:#9ca3af">실행</span>`;
-      if (detail.phase === 'cleanup') return `<span style="color:#f97316">useEffect</span> <span style="color:#9ca3af">cleanup 실행</span>`;
-      return `<span style="color:#f97316">useEffect</span> <span style="color:#9ca3af">${esc(detail.phase || '')}</span>`;
+    case 'EFFECT': {
+      const labelPart = detail.label ? ` <span style="color:#e2e8f0">${esc(detail.label)}</span>` : '';
+      if (detail.phase === 'run') return `<span style="color:#f97316">useEffect</span>${labelPart} <span style="color:#9ca3af">실행</span>`;
+      if (detail.phase === 'cleanup') return `<span style="color:#f97316">useEffect</span>${labelPart} <span style="color:#9ca3af">cleanup 실행</span>`;
+      if (detail.phase === 'timer-tick') return `<span style="color:#f97316">useEffect</span>${labelPart} <span style="color:#9ca3af">타이머 틱</span>`;
+      return `<span style="color:#f97316">useEffect</span>${labelPart} <span style="color:#9ca3af">${esc(detail.phase || '')}</span>`;
+    }
     case 'VDOM':
       return `<span style="color:#9ca3af">Virtual DOM 생성 완료</span>`;
     case 'DIFF': {
@@ -288,9 +303,14 @@ function getSummary(type, detail) {
         ? `<span style="color:#9ca3af">DOM 업데이트 없음</span>`
         : `<span style="color:#34d399">실제 DOM 업데이트 (${n}개 패치 적용)</span>`;
     }
-    case 'RENDER':
-      return `<span style="color:#34d399">렌더 완료</span> <span style="color:#6b7280">(${detail.count}개 변경 / ${detail.duration}ms)</span>`;
+    case 'RENDER': {
+      const patchCount = detail.patchCount ?? detail.count ?? 0;
+      return `<span style="color:#34d399">렌더 완료</span> <span style="color:#6b7280">(${patchCount}개 변경 / ${detail.duration}ms)</span>`;
+    }
     case 'UPDATE':
+      if (detail.cause) {
+        return `<span style="color:#9ca3af">컴포넌트 업데이트</span> <span style="color:#6b7280">(${esc(detail.cause)})</span>`;
+      }
       return `<span style="color:#9ca3af">컴포넌트 업데이트</span>`;
     default:
       return `<span style="color:#9ca3af">${esc(JSON.stringify(detail).slice(0, 60))}</span>`;
@@ -444,13 +464,13 @@ function createRenderCycleEl(group) {
   const patchEntry = entries.find(e => e.type === 'PATCH');
 
   const cause = updateEntry?.detail?.cause;
-  const patchCount = renderEntry?.detail?.count ?? diffEntry?.detail?.count ?? '?';
+  const patchCount = renderEntry?.detail?.patchCount ?? renderEntry?.detail?.count ?? diffEntry?.detail?.count ?? '?';
   const duration = renderEntry?.detail?.duration ?? '?';
 
   // 요약 정보
   const causeLabel = cause
     ? cause.split(':').slice(-2).join(':')
-    : 'initial';
+    : 'update';
 
   const wrapper = document.createElement('div');
   wrapper.className = 'dt-entry dt-render-cycle';

@@ -1,7 +1,7 @@
 // ── hooks.js ──────────────────────────────────────────────────────────────────
 // useState, useEffect: FunctionComponent 인스턴스의 hooks[] 배열 기반 구현
 
-import { trace } from './tracer.js';
+import { trace, getCurrentTraceCause } from './tracer.js';
 
 // 현재 렌더 중인 FunctionComponent 인스턴스
 let currentInstance = null;
@@ -53,10 +53,14 @@ export function useState(initialValue) {
   const setState = (newVal) => {
     const prev = hook.value;
     const resolved = typeof newVal === 'function' ? newVal(prev) : newVal;
+    const cause = normalizeTraceCause(getCurrentTraceCause());
 
-    trace('HOOK', { hook: 'useState', phase: 'set', prev, next: resolved });
+    trace('HOOK', { hook: 'useState', phase: 'set', prev, next: resolved, cause });
 
     if (shallowEqualState(prev, resolved)) return; // 동일하면 렌더 생략
+    if (cause && !instance.pendingUpdateCause) {
+      instance.pendingUpdateCause = cause;
+    }
     hook.value = resolved;
     instance.scheduleUpdate();
   };
@@ -65,24 +69,24 @@ export function useState(initialValue) {
 }
 
 // ── useEffect ─────────────────────────────────────────────────────────────────
-export function useEffect(callback, deps) {
+export function useEffect(callback, deps, label) {
   const instance = currentInstance;
   const idx = instance.hookIndex++;
 
   // 첫 렌더 시 effect 슬롯 생성
   if (idx >= instance.hooks.length) {
-    instance.hooks.push({ type: 'effect', deps: undefined, cleanup: undefined });
+    instance.hooks.push({ type: 'effect', deps: undefined, cleanup: undefined, label });
   }
 
   // 렌더 후 flushEffects에서 처리할 수 있도록 대기열에 등록
-  instance.pendingEffects.push({ idx, callback, deps });
+  instance.pendingEffects.push({ idx, callback, deps, label });
 }
 
 // ── flushEffects: 렌더 후 requestAnimationFrame에서 호출 ──────────────────────
 export function flushEffects(instance) {
   const effects = instance.pendingEffects.splice(0);
 
-  for (const { idx, callback, deps } of effects) {
+  for (const { idx, callback, deps, label } of effects) {
     const hook = instance.hooks[idx];
     const prevDeps = hook.deps;
 
@@ -93,10 +97,10 @@ export function flushEffects(instance) {
 
     if (shouldRun) {
       if (typeof hook.cleanup === 'function') {
-        trace('EFFECT', { hook: 'useEffect', phase: 'cleanup', idx });
+        trace('EFFECT', { hook: 'useEffect', phase: 'cleanup', idx, label: label || hook.label });
         hook.cleanup();
       }
-      trace('EFFECT', { hook: 'useEffect', phase: 'run', idx, deps });
+      trace('EFFECT', { hook: 'useEffect', phase: 'run', idx, deps, label: label || hook.label });
       const cleanup = callback();
       hook.deps = deps ? [...deps] : undefined;
       hook.cleanup = cleanup;
@@ -145,6 +149,15 @@ function shallowEqualState(prev, next) {
   }
 
   return false;
+}
+
+function normalizeTraceCause(cause) {
+  if (!cause) return null;
+  if (typeof cause === 'string') return cause;
+  if (typeof cause === 'object') {
+    return cause.summary || cause.label || cause.phase || null;
+  }
+  return String(cause);
 }
 
 // ── useMemo ───────────────────────────────────────────────────────────────────
