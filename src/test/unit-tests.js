@@ -324,6 +324,46 @@ describe('vdom - diff & patch', {
     assert.equal(patches.length, 0);
   });
 
+  it('빈 문자열 텍스트 노드가 있어도 props 패치 대상이 밀리지 않는다', {
+    goal: '앞쪽 빈 text node가 있어도 input value 패치가 sibling에 잘못 적용되지 않음',
+    checkpoints: ['input value = demo', 'sibling span에 value 속성 없음'],
+  }, () => {
+    const sandbox = createSandbox('diff-empty-text-offset');
+    const oldV = createElement('div', {},
+      createElement('header', {},
+        createElement('span', { id: 'ghost-label' }, '')
+      ),
+      createElement('form', {},
+        createElement('input', { id: 'nickname', value: '' }),
+        createElement('span', { id: 'status' }),
+        createElement('button', { id: 'submit', type: 'submit' }, '입장하기')
+      )
+    );
+    const newV = createElement('div', {},
+      createElement('header', {},
+        createElement('span', { id: 'ghost-label' }, '')
+      ),
+      createElement('form', {},
+        createElement('input', { id: 'nickname', value: 'demo' }),
+        createElement('span', { id: 'status' }),
+        createElement('button', { id: 'submit', type: 'submit' }, '입장하기')
+      )
+    );
+
+    const el = vnodeToDOM(oldV);
+    sandbox.appendChild(el);
+
+    const patches = diff(oldV, newV);
+    patch(el, patches);
+
+    const input = sandbox.querySelector('#nickname');
+    const status = sandbox.querySelector('#status');
+    log('input value', input.getAttribute('value'));
+    log('status value attr', status.getAttribute('value'));
+    assert.equal(input.getAttribute('value'), 'demo');
+    assert.equal(status.getAttribute('value'), null);
+  });
+
 });
 
 // ── 이벤트 위임 ───────────────────────────────────────────────────────────────

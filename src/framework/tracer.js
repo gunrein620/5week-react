@@ -33,7 +33,7 @@ const TYPE_MIN_LEVEL = {
   HOOK:   TRACE_LEVELS.DETAIL,
   EFFECT: TRACE_LEVELS.DETAIL,
   MEMO:   TRACE_LEVELS.DETAIL,
-  UPDATE: TRACE_LEVELS.DEBUG,
+  UPDATE: TRACE_LEVELS.DETAIL,
   VDOM:   TRACE_LEVELS.DEBUG,
   DIFF:   TRACE_LEVELS.DEBUG,
   PATCH:  TRACE_LEVELS.DEBUG,
@@ -45,6 +45,7 @@ const TRACE_HISTORY_LIMIT = 200;
 let traceEnabled = false;
 let traceSeq = 0;
 let currentTraceLevel = TRACE_LEVELS.DETAIL; // 기본값: DETAIL
+let currentTraceCause = null;
 
 export function setTraceEnabled(enabled) {
   traceEnabled = Boolean(enabled);
@@ -60,6 +61,20 @@ export function setTraceLevel(level) {
 
 export function getTraceLevel() {
   return currentTraceLevel;
+}
+
+export function getCurrentTraceCause() {
+  return currentTraceCause;
+}
+
+export function runWithTraceCause(cause, fn) {
+  const prev = currentTraceCause;
+  currentTraceCause = cause;
+  try {
+    return fn();
+  } finally {
+    currentTraceCause = prev;
+  }
 }
 
 export function trace(type, detail = {}) {
@@ -113,4 +128,5 @@ export function __resetTracerForTests() {
   traceHistory.length = 0;
   traceSeq = 0;
   currentTraceLevel = TRACE_LEVELS.DETAIL;
+  currentTraceCause = null;
 }

@@ -21,6 +21,13 @@ async function waitFor(predicate, timeout = 5000, interval = 100) {
   }
 }
 
+async function silentRefreshFeed() {
+  if (typeof window.__dtRefreshPosts === 'function') {
+    await window.__dtRefreshPosts();
+    await wait(50);
+  }
+}
+
 // DOM input/textarea 값 변경 + input 이벤트 발생
 function setInputValue(el, value) {
   if (!el) return;
@@ -50,33 +57,30 @@ export const scenarios = [
     highlights: ['useState'],
     enabled: true,
 
-    // Silent Setup: 트레이싱 없이 대상 게시글 자동 생성
+    // Silent Setup: 로그인 상태 보장만 (게시글 자동 생성 없음 — 유저가 만든 기존 글 대상)
     async setup() {
-      const username = await ensureLoggedIn();
-      const data = await silentCreatePost(username, '좋아요 테스트 게시글 🧪');
-      this._setupPostId = data.livePosts?.[0]?.id || null;
-    },
-
-    async run() {
-      // 피드로 이동
+      await ensureLoggedIn();
       navigate('#/feed');
-
-      // setup에서 생성한 게시글이 DOM에 나타날 때까지 대기 (최대 6초)
-      const appeared = await waitFor(
+      await silentRefreshFeed();
+      await waitFor(
         () => Boolean(document.querySelector(
           '.post-card__like-btn:not(.post-card__like-btn--liked):not(.post-card__like-btn--loading)'
         )),
-        6000
+        2000
       );
+    },
 
-      // 좋아요 누를 수 있는 첫 번째 포스트 찾기
-      const btn = document.querySelector(
-        '.post-card__like-btn:not(.post-card__like-btn--liked):not(.post-card__like-btn--loading)'
-      );
+    async run() {
+      navigate('#/feed');
+      await wait(400); // 렌더 사이클 완료 대기
 
-      if (!btn || !appeared) {
+      // 타이머가 정지된 상태이므로 폴링을 기대할 수 없음 — 현재 DOM을 즉시 탐색
+      const selector = '.post-card__like-btn:not(.post-card__like-btn--liked):not(.post-card__like-btn--loading)';
+      const btn = document.querySelector(selector);
+
+      if (!btn) {
         trace('ACTION', {
-          message: '좋아요를 누를 수 있는 게시물이 없습니다. (모두 이미 좋아요 완료)',
+          message: '⚠️ 좋아요를 누를 수 있는 게시물이 없습니다 (게시물이 없거나 모두 이미 좋아요 완료)',
           result: 'skip',
         });
         return;
@@ -88,14 +92,13 @@ export const scenarios = [
       const initialLikes = likeCountEl ? parseInt(likeCountEl.textContent, 10) : '?';
 
       trace('ACTION', {
-        message: `👍 사용자가 게시물 #${postId} 에 좋아요를 눌렀습니다`,
+        message: `👍 사용자가 게시물 #${postId}에 좋아요를 눌렀습니다`,
         postId,
         currentLikes: initialLikes,
       });
 
       await wait(200);
       btn.click();
-      // API 응답 + 리렌더 대기
       await wait(1800);
     },
 
@@ -124,7 +127,7 @@ export const scenarios = [
     id: 'ttl',
     icon: '⏱️',
     title: 'TTL 자동 감소',
-    description: 'useEffect 타이머 등록 + 매초 상태 감소 + cleanup',
+    description: 'useEffect 타이머 등록 → useState 매초 리렌더 사이클 관찰',
     highlights: ['useEffect'],
     enabled: true,
 
@@ -138,13 +141,36 @@ export const scenarios = [
       if (this._setupPostId) {
         await TimeController.extendTtl(this._setupPostId, 5);
       }
+      navigate('#/feed');
+      await silentRefreshFeed();
+      if (this._setupPostId) {
+        await waitFor(
+          () => Boolean(document.querySelector(`[data-key="${this._setupPostId}"] .post-card__ttl-text`)),
+          3000
+        );
+      }
     },
 
     async run() {
+      // 효과 등록 시점 설명 — useEffect는 마운트 시 1회 실행, 지금 타이머가 돌고 있음
+      trace('ACTION', {
+        message: '📌 useEffect([], setInterval) — App 마운트 시 TTL 카운트다운 타이머 등록됨',
+      });
+
       navigate('#/feed');
       await wait(500);
 
-      const ttlEl = document.querySelector('.post-card__ttl-text');
+      const ttlSelector = this._setupPostId
+        ? `[data-key="${this._setupPostId}"] .post-card__ttl-text`
+        : '.post-card__ttl-text';
+      const ttlEl = document.querySelector(ttlSelector);
+      if (!ttlEl) {
+        trace('ACTION', {
+          message: '⚠️ TTL을 관찰할 대상 게시물을 찾을 수 없습니다',
+          result: 'skip',
+        });
+        return;
+      }
       const postCard = ttlEl?.closest('[data-key]');
       const postId = postCard ? postCard.getAttribute('data-key') : 'unknown';
       const initialTtl = ttlEl ? ttlEl.textContent.trim() : '?';
@@ -154,6 +180,10 @@ export const scenarios = [
         postId,
         initialTtl,
         observing: '3초간 TTL 감소 관찰',
+      });
+
+      trace('ACTION', {
+        message: '📋 useEffect([], ...) 타이머는 마운트 시 1회 등록됨 — 이후 매초 useState 리렌더를 관찰합니다',
       });
 
       // 3.5초 동안 TTL 타이머 관찰 (자동으로 HOOK/STATE/VDOM/DIFF/PATCH/RENDER trace 발생)

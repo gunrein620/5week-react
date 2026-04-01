@@ -15,13 +15,16 @@ export class FunctionComponent {
     this.rootDOM = null;
     this.pendingEffects = [];
     this.renderScheduled = false;
+    this.pendingUpdateCause = null;
   }
 
   // 처음 렌더링
   mount() {
+    trace('UPDATE', { component: this.fn.name, cause: 'mount' });
     setCurrentInstance(this);
     const vTree = this.fn();
     clearCurrentInstance();
+    trace('VDOM', { root: { tagName: vTree.tagName || vTree.type, childCount: (vTree.children || []).length } });
 
     this.rootDOM = vnodeToDOM(vTree);
     this.container.appendChild(this.rootDOM);
@@ -36,10 +39,14 @@ export class FunctionComponent {
   update() {
     this.renderScheduled = false;
     const t0 = performance.now();
+    const cause = this.pendingUpdateCause || 'state update';
+    this.pendingUpdateCause = null;
 
+    trace('UPDATE', { component: this.fn.name, cause });
     setCurrentInstance(this);
     const newVTree = this.fn();
     clearCurrentInstance();
+    trace('VDOM', { root: { tagName: newVTree.tagName || newVTree.type, childCount: (newVTree.children || []).length } });
 
     const patches = diff(this.vTree, newVTree);
     if (patches.length > 0) {
@@ -52,6 +59,7 @@ export class FunctionComponent {
       phase: 'update',
       component: this.fn.name,
       patchCount: patches.length,
+      cause,
       duration: Math.round((performance.now() - t0) * 10) / 10,
     });
     requestAnimationFrame(() => flushEffects(this));
@@ -60,7 +68,11 @@ export class FunctionComponent {
   scheduleUpdate() {
     if (this.renderScheduled) return;
     this.renderScheduled = true;
-    trace('STATE', { reason: 'scheduleUpdate', component: this.fn.name });
+    trace('STATE', {
+      reason: 'scheduleUpdate',
+      component: this.fn.name,
+      cause: this.pendingUpdateCause || null,
+    });
     queueMicrotask(() => this.update());
   }
 

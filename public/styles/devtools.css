@@ -162,8 +162,8 @@
 
 .dt-section-label {
   padding: 12px 16px 8px;
-  font-size: 11px;
-  color: #6b7280;
+  font-size: 12px;
+  color: #9ca3af;
   text-transform: uppercase;
   letter-spacing: 1px;
   border-bottom: 1px solid #1a1a30;
@@ -217,7 +217,7 @@
 }
 
 .dt-scenario-title {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   color: #e2e8f0;
   margin-bottom: 3px;
@@ -236,8 +236,8 @@
 }
 
 .dt-scenario-desc {
-  font-size: 11px;
-  color: #6b7280;
+  font-size: 12px;
+  color: #9ca3af;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -385,7 +385,7 @@
 
 .dt-entry-type {
   font-weight: 700;
-  font-size: 11px;
+  font-size: 12px;
   letter-spacing: 0.5px;
   display: inline-block;
   min-width: 56px;
@@ -397,16 +397,16 @@
 
 .dt-entry-body {
   display: inline;
-  color: #cbd5e1;
-  font-size: 12px;
+  color: #e2e8f0;
+  font-size: 13px;
   line-height: 1.5;
   word-break: break-all;
 }
 
 .dt-entry-detail {
   padding: 2px 16px 2px 80px;
-  color: #6b7280;
-  font-size: 11px;
+  color: #9ca3af;
+  font-size: 12px;
   line-height: 1.6;
 }
 
