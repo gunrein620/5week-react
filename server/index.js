@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
+const { seedData, makeProfileImage } = require('./seed');
 
 const app = express();
 app.use(cors());
@@ -11,6 +12,7 @@ app.use(express.json({ limit: '5mb' }));
 const users = new Set();          // 닉네임 Set
 const livePosts = new Map();      // id → 공개 피드용 post 객체
 const archivedPosts = new Map();  // username → Map<id, postSnapshot>
+const userProfiles = new Map();   // username → { profileImage }
 
 let serverTimersPaused = false;   // 테스트용 타이머 일시정지 플래그
 
@@ -52,6 +54,7 @@ function serializePost(post) {
   return {
     id: post.id,
     author: post.author,
+    authorProfileImage: userProfiles.get(post.author)?.profileImage || null,
     text: post.text,
     imageData: post.imageData,
     likes: post.likes,
@@ -87,6 +90,8 @@ function getFeedPayload(username) {
   };
 }
 
+seedData(users, livePosts, archivedPosts, userProfiles);
+
 // ── Auth ──────────────────────────────────────────────────
 app.post('/api/auth/login', (req, res) => {
   const { username } = req.body;
@@ -95,6 +100,9 @@ app.post('/api/auth/login', (req, res) => {
   }
   const name = username.trim();
   users.add(name);
+  if (!userProfiles.has(name)) {
+    userProfiles.set(name, { profileImage: makeProfileImage(name) });
+  }
   res.json({ ok: true, username: name });
 });
 
@@ -143,10 +151,23 @@ app.get('/api/posts', (req, res) => {
   res.json(getFeedPayload(username));
 });
 
+app.get('/api/user-profiles', (req, res) => {
+  res.json({
+    ok: true,
+    users: Array.from(userProfiles.entries()).map(([username, profile]) => ({
+      username,
+      profileImage: profile.profileImage,
+    })),
+  });
+});
+
 app.post('/api/posts', (req, res) => {
   const { username, text, imageData } = req.body;
   if (!username || !users.has(username)) {
     return res.status(401).json({ ok: false, message: '로그인이 필요합니다.' });
+  }
+  if (!userProfiles.has(username)) {
+    userProfiles.set(username, { profileImage: makeProfileImage(username) });
   }
   if (!text && !imageData) {
     return res.status(400).json({ ok: false, message: '내용을 입력해주세요.' });
