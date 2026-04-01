@@ -27,7 +27,7 @@ export function Login() {
         navigate('#/feed');
         setTimeout(() => {
           window.location.reload();
-        }, 50);
+        }, 3);
       } else {
         setError(data.message || '오류가 발생했습니다.');
       }
