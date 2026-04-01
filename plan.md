@@ -1,617 +1,663 @@
-# Flicker DevTools - 시나리오 트레이스 구현 계획
+# 시나리오 트레이싱 개선 계획
 
-## 1. 컨셉
+## 문제 정의
 
-PASS/FAIL 테스트 러너를 버린다.
-대신 **시나리오를 선택하면 프레임워크 내부 동작을 단계별로 트레이스**하는 DevTools 패널을 만든다.
+현재 Flicker DevTools의 시나리오 트레이싱 시스템은 다음 문제를 갖고 있다:
+- 모든 트레이스가 필터 없이 표시되어 핵심 상태 변경을 파악하기 어려움
+- 시간 감소 타이머가 시나리오 검증을 방해
+- TTL/좋아요 시나리오의 사전 작업(게시글 생성)이 수동이라 타이밍 이슈 발생
+- 글 작성 시나리오에서 트레이싱 UI와 백그라운드 로직 간 Race Condition 존재
 
-### 왜?
+## 현재 코드베이스 상태
 
-| | 기존 PASS/FAIL | 시나리오 트레이스 |
-|---|---|---|
-| 시연 시간 | 0.3초 (순식간에 끝남) | 시나리오당 5~10초 |
-| 가독성 | 초록 체크 31줄 | 단계별 흐름이 읽힘 |
-| 설명력 | "다 통과했습니다" | "이 과정을 거쳐서 동작합니다" |
-| 이해도 증명 | 안 드러남 | useState→VDOM→Diff→Patch 전체 흐름 |
-
----
-
-## 2. 시나리오 목록
-
-### 핵심 시나리오 (발표용)
-
-| # | 시나리오 | 보여주는 핵심 로직 | 트레이스 단계 |
-|---|---------|-------------------|--------------|
-| 1 | 👍 좋아요 클릭 | **useState** 상태변경 → 리렌더 전체 흐름 | ACTION→HOOK→STATE→VDOM→DIFF→PATCH→RENDER |
-| 2 | ⏱️ TTL 자동 감소 | **useEffect** 타이머 등록 + cleanup | ACTION→EFFECT→HOOK→STATE→VDOM→DIFF→PATCH→RENDER |
-| 3 | 🔑 로그인 | **useState** + **useEffect** 조합 + 라우팅 | ACTION→HOOK→STATE→EFFECT→VDOM→DIFF→PATCH→RENDER |
-| 4 | ✏️ 글 작성 | 입력 → 검증 → 상태 반영 | ACTION→HOOK→STATE→VDOM→DIFF→PATCH→RENDER |
-| 5 | 🧠 메모이제이션 | **useMemo** 캐싱 vs 재계산 *(추후 추가)* | ACTION→MEMO→HOOK→STATE→VDOM→DIFF→PATCH→RENDER |
-
-### 시나리오 5번 (useMemo) 상세
-
-useMemo는 추후 구현 예정이므로, DevTools에는 **자리만 만들어두고 비활성 상태**로 표시:
-
-```
-┌─────────────────────────────────┐
-│  🧠 메모이제이션 (useMemo)      │
-│  ─────────────────────────────  │
-│                                 │
-│  ⚠️ useMemo는 다음 버전에서     │
-│     구현 예정입니다              │
-│                                 │
-│  구현 시 트레이스할 내용:       │
-│  ├─ deps 비교 → 캐시 히트/미스  │
-│  ├─ factory 함수 실행 여부      │
-│  └─ 불필요한 재계산 스킵 확인   │
-│                                 │
-└─────────────────────────────────┘
-```
-
-useMemo 구현 후 바로 연결되도록 tracer.js에 `MEMO` 타입을 미리 정의해둔다.
-
----
-
-## 3. 트레이스 출력 상세
-
-### 시나리오 1: 👍 좋아요 클릭
-
-```
-[ACTION] 👍 사용자가 게시물 #p001 에 좋아요를 눌렀습니다
-───────────────────────────────────────────
-
-[HOOK]   useState 호출
-         ├─ hookIndex : 0
-         ├─ slot key  : PostCard#1:state:0
-         ├─ 이전 state : { likes: 2, ttl: 10 }
-         └─ 새 state   : { likes: 3, ttl: 15 }
-
-[STATE]  상태 변경 감지 → scheduleRender()
-         ├─ 변경된 키 : likes (2 → 3)
-         └─ 변경된 키 : ttl   (10 → 15)
-
-[VDOM]   Virtual DOM 생성 완료
-         └─ 변경 노드 : <span class="likes">3</span>
-                        <span class="ttl">15s</span>
-
-[DIFF]   이전 VDOM ↔ 새 VDOM 비교
-         ├─ TEXT  : likes  "2" → "3"
-         ├─ TEXT  : ttl    "10s" → "15s"
-         └─ SKIP  : 나머지 노드 (변경 없음)
-
-[PATCH]  실제 DOM 업데이트
-         ├─ ✅ .likes textContent = "3"
-         └─ ✅ .ttl   textContent = "15s"
-
-[RENDER] 완료 (2개 노드 변경 / 12ms)
-
-────────── 검증 ──────────
-✅ likes 값이 3으로 증가했는가
-✅ TTL이 15로 리셋되었는가
-✅ DOM에 정확히 반영되었는가
-✅ 변경 없는 노드는 스킵했는가
-```
-
-### 시나리오 2: ⏱️ TTL 자동 감소
-
-```
-[ACTION] ⏱️ TTL 타이머 시작 — 게시물 #p001
-───────────────────────────────────────────
-
-[EFFECT] useEffect 등록
-         ├─ hookIndex : 1
-         ├─ slot key  : PostCard#1:effect:1
-         ├─ deps      : [postId]
-         └─ 동작      : setInterval(1초마다 ttl--)
-
-[HOOK]   useState 호출 (타이머 콜백)
-         ├─ hookIndex : 0
-         ├─ 이전 state : { ttl: 15 }
-         └─ 새 state   : { ttl: 14 }
-
-[STATE]  상태 변경 감지 → scheduleRender()
-         └─ 변경된 키 : ttl (15 → 14)
-
-[VDOM]   Virtual DOM 생성 완료
-         └─ 변경 노드 : <span class="ttl">14s</span>
-
-[DIFF]   이전 VDOM ↔ 새 VDOM 비교
-         ├─ TEXT  : ttl "15s" → "14s"
-         └─ SKIP  : 나머지 노드
-
-[PATCH]  실제 DOM 업데이트
-         └─ ✅ .ttl textContent = "14s"
-
-[RENDER] 완료 (1개 노드 변경 / 3ms)
-
-         ... (14 → 13 → 12 → ... → 1 → 0)
-
-[EFFECT] cleanup 실행
-         ├─ slot key  : PostCard#1:effect:1
-         ├─ 동작      : clearInterval(timerId)
-         └─ 이유      : ttl === 0, 게시물 만료
-
-────────── 검증 ──────────
-✅ useEffect가 마운트 시 1회 등록되었는가
-✅ 1초마다 ttl이 감소하는가
-✅ ttl=0 도달 시 cleanup(clearInterval)이 실행되는가
-✅ cleanup 후 타이머가 멈추는가
-```
-
-### 시나리오 3: 🔑 로그인
-
-```
-[ACTION] 🔑 사용자가 로그인 버튼을 클릭했습니다
-───────────────────────────────────────────
-
-[HOOK]   useState 호출 (입력값 읽기)
-         ├─ slot key  : Login#1:state:0
-         └─ 현재 state : { username: "kimyong" }
-
-[STATE]  API 호출 시작
-         └─ POST /api/login { username: "kimyong" }
-
-[HOOK]   useState 호출 (로그인 결과 저장)
-         ├─ slot key  : App#1:state:0
-         ├─ 이전 state : { user: null }
-         └─ 새 state   : { user: "kimyong" }
-
-[EFFECT] useEffect 실행 (로그인 후처리)
-         ├─ slot key  : App#1:effect:0
-         ├─ deps      : [user]  (null → "kimyong")
-         └─ 동작      : localStorage.setItem + navigate('#/feed')
-
-[VDOM]   Virtual DOM 생성 완료
-         └─ 루트 변경 : Login 컴포넌트 → Feed 컴포넌트
-
-[DIFF]   이전 VDOM ↔ 새 VDOM 비교
-         └─ REPLACE : 전체 트리 교체 (Login → Feed)
-
-[PATCH]  실제 DOM 업데이트
-         └─ ✅ 전체 DOM 교체 (replaceChild)
-
-[RENDER] 완료 (전체 교체 / 45ms)
-
-────────── 검증 ──────────
-✅ 로그인 후 user 상태가 저장되었는가
-✅ useEffect가 deps 변경을 감지했는가
-✅ 라우트가 #/feed로 변경되었는가
-✅ Feed 컴포넌트가 렌더링되었는가
-```
-
-### 시나리오 4: ✏️ 글 작성
-
-```
-[ACTION] ✏️ 사용자가 글 작성 버튼을 클릭했습니다
-───────────────────────────────────────────
-
-[HOOK]   useState 호출 (입력 내용)
-         ├─ slot key  : CreatePost#1:state:0
-         └─ 현재 state : { content: "오늘 날씨 좋다" }
-
-[STATE]  입력 검증
-         ├─ content.length : 8
-         └─ 결과 : ✅ 통과 (1자 이상)
-
-[STATE]  API 호출
-         └─ POST /api/posts { content: "오늘 날씨 좋다" }
-
-[HOOK]   useState 호출 (입력 초기화)
-         ├─ slot key  : CreatePost#1:state:0
-         ├─ 이전 state : { content: "오늘 날씨 좋다" }
-         └─ 새 state   : { content: "" }
-
-[EFFECT] useEffect 실행 (작성 후 피드 이동)
-         ├─ deps      : [submitted]  (false → true)
-         └─ 동작      : navigate('#/feed')
-
-[VDOM]   Virtual DOM 생성 완료
-         └─ 루트 변경 : CreatePost → Feed (새 글 포함)
-
-[DIFF]   이전 VDOM ↔ 새 VDOM 비교
-         └─ REPLACE : 전체 트리 교체
-
-[PATCH]  실제 DOM 업데이트
-         └─ ✅ 전체 DOM 교체
-
-[RENDER] 완료
-
-────────── 검증 ──────────
-✅ 빈 내용이면 작성이 거부되는가 (엣지)
-✅ 작성 후 입력 필드가 초기화되는가
-✅ 피드로 이동하는가
-✅ 새 글이 피드 목록에 표시되는가
-```
-
-### 시나리오 5: 🧠 메모이제이션 (useMemo) — 추후 구현
-
-```
-[ACTION] 🧠 피드 정렬 변경 (최신순 → 좋아요순)
-───────────────────────────────────────────
-
-[MEMO]   useMemo 호출
-         ├─ slot key  : Feed#1:memo:0
-         ├─ deps      : [sortType]  ("latest" → "popular")
-         ├─ 캐시      : ❌ MISS (deps 변경)
-         └─ factory   : posts.sort((a,b) => b.likes - a.likes)
-
-[HOOK]   useState — 정렬된 목록 반영
-         ├─ 이전 state : [p003, p001, p002]  (시간순)
-         └─ 새 state   : [p001, p002, p003]  (좋아요순)
-
-         ... (VDOM → DIFF → PATCH → RENDER)
-
-[ACTION] 🧠 다른 상태 변경 (좋아요 클릭)
-───────────────────────────────────────────
-
-[MEMO]   useMemo 호출
-         ├─ slot key  : Feed#1:memo:0
-         ├─ deps      : [sortType]  ("popular" → "popular")
-         ├─ 캐시      : ✅ HIT (deps 동일 — 재계산 스킵!)
-         └─ factory   : 실행 안 함 (캐시된 결과 사용)
-
-         ... (나머지 흐름은 동일)
-
-────────── 검증 ──────────
-✅ deps 변경 시 factory가 재실행되는가
-✅ deps 동일 시 캐시된 값을 반환하는가 (재계산 스킵)
-✅ 여러 useMemo가 독립적으로 동작하는가
-```
-
----
-
-## 4. UI 레이아웃
-
-### 메인 화면
-
-```
-┌──────────────────────────────┬───────────────────────────────────────┐
-│                              │  ⚡ Flicker DevTools            [✕]  │
-│                              │                                      │
-│                              │  ▼ 시나리오 선택                     │
-│     Flicker 앱 화면          │  ┌────────────────────────────────┐  │
-│     (좌측, 실제 동작)         │  │ 👍 좋아요 클릭                 │  │
-│                              │  │ ⏱️ TTL 자동 감소               │  │
-│                              │  │ 🔑 로그인                      │  │
-│                              │  │ ✏️ 글 작성                     │  │
-│                              │  │ 🧠 메모이제이션 ⚠️ 준비중      │  │
-│                              │  └────────────────────────────────┘  │
-│                              │                                      │
-│                              │  [▶ 실행]  [🔄 초기화]               │
-│                              │                                      │
-└──────────────────────────────┴───────────────────────────────────────┘
-```
-
-### 시나리오 실행 중
-
-```
-┌──────────────────────────────┬───────────────────────────────────────┐
-│                              │  ⚡ Flicker DevTools            [✕]  │
-│                              │  ◀ 뒤로   👍 좋아요 클릭             │
-│                              │  ─────────────────────────────────── │
-│     Flicker 앱 화면          │                                      │
-│     (좌측, 실제로             │  [ACTION] 👍 #p001 좋아요           │
-│      좋아요가 눌림)           │  ────────────────────                │
-│                              │                                      │
-│                              │  [HOOK]  useState 호출               │
-│                              │          ├─ likes: 2 → 3             │
-│                              │          └─ ttl: 10 → 15             │
-│                              │                                      │
-│                              │  [STATE] 변경 감지 → 리렌더 예약     │
-│                              │                                      │
-│                              │  [VDOM]  새 트리 생성                │
-│                              │                                      │
-│                              │  [DIFF]  2개 변경 / 나머지 스킵      │
-│                              │                                      │
-│                              │  [PATCH] DOM 업데이트 ✅             │
-│                              │                                      │
-│                              │  [RENDER] 완료 (12ms)               │
-│                              │                                      │
-│                              │  ────────── 검증 ──────────          │
-│                              │  ✅ likes = 3                        │
-│                              │  ✅ TTL = 15                         │
-│                              │  ✅ DOM 반영 정확                    │
-│                              │  ✅ 불필요한 노드 스킵               │
-│                              │                                      │
-└──────────────────────────────┴───────────────────────────────────────┘
-```
-
-### 스타일
-
-- **배경**: `#1a1a2e` (다크 네이비)
-- **폰트**: `'SF Mono', 'Fira Code', monospace` 14px
-- **색상 규칙**:
-  - `[ACTION]` → `#60a5fa` (파란색)
-  - `[HOOK]` `[STATE]` → `#fbbf24` (노란색) — useState/setState 강조
-  - `[EFFECT]` → `#f97316` (오렌지) — useEffect 강조
-  - `[MEMO]` → `#a78bfa` (보라색) — useMemo 강조 (추후)
-  - `[VDOM]` `[DIFF]` → `#c084fc` (연보라)
-  - `[PATCH]` `[RENDER]` → `#34d399` (초록)
-  - `✅` → `#34d399` / `❌` → `#f87171`
-  - 트리 구조 (`├─ └─`) → `#6b7280` (회색)
-- **애니메이션**: 각 `[단계]`가 0.3초 간격으로 순차 등장 (타이핑 효과)
-
----
-
-## 5. 파일 구조
-
+### 파일 구조 (관련 파일)
 ```
 src/
-  ├── framework/
-  │   ├── tracer.js          ← 새로 생성
-  │   ├── hooks.js           ← trace 포인트 삽입
-  │   ├── component.js       ← trace 포인트 삽입
-  │   └── vdom.js            ← trace 포인트 삽입
-  └── test/
-      ├── devtools-panel.js  ← 새로 생성 (UI + 시나리오 실행)
-      ├── scenarios.js       ← 새로 생성 (5개 시나리오 정의)
-      └── test-runner.js     ← 삭제 또는 보관
-public/
-  └── styles/
-      └── devtools.css       ← 새로 생성
+├── framework/
+│   ├── tracer.js        (79줄)  — trace 이벤트 버스, 필터링 없음
+│   ├── hooks.js         (221줄) — useState, useEffect + trace 삽입
+│   ├── component.js     (120줄) — renderApp + trace 삽입
+│   └── vdom.js          (422줄) — diff/patch + 이벤트 위임
+├── test/
+│   ├── devtools-panel.js (663줄) — DevTools UI + 시나리오 실행
+│   └── scenarios.js      (322줄) — 5개 시나리오 정의
+├── components/
+│   └── PostCard.js       — TTL 타이머 (window.__dtPauseTimers 체크)
+└── services/
+    └── api.js            — Fetch 래퍼
+server/
+└── index.js              (170줄) — Express API + 서버사이드 TTL 관리
+```
+
+### 기존 메커니즘 분석
+
+**tracer.js:**
+- `trace(type, detail)` → `traceEnabled`이면 기록, 아니면 무시
+- `traceHistory` 배열 (최대 200개, 원형 버퍼)
+- `traceListeners` Set으로 실시간 구독
+- **문제: 레벨/필터링 시스템 없음 → 모든 trace가 동일 우선순위**
+
+**scenarios.js — 타이머 제어:**
+- `window.__dtPauseTimers` 플래그 존재
+- PostCard.js의 setInterval 내에서 `if (window.__dtPauseTimers) return;`
+- devtools-panel.js에서 TTL 시나리오가 아니면 `__dtPauseTimers = true` 설정
+- **문제: 클라이언트만 정지, 서버 TTL은 계속 감소 → 불일치**
+
+**scenarios.js — Setup:**
+- Like 시나리오: 기존 피드에 게시글이 있다고 가정, 없으면 실패
+- TTL 시나리오: 기존 게시글의 TTL을 관찰, 수동 생성 필요
+- **문제: 사전 게시글 생성이 자동화되어 있지 않음**
+
+**devtools-panel.js — 타이밍:**
+- 300ms 간격으로 트레이스 그룹을 순차 렌더링 (애니메이션)
+- `await scenario.run()` 후 트레이스 수집 → 그룹핑 → 렌더링
+- **문제: 렌더링 중 서버 TTL이 계속 감소하여 글이 먼저 사라짐**
+
+---
+
+## 전체 개선 아키텍처 요약
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    개선 아키텍처                          │
+├─────────────────────────────────────────────────────────┤
+│                                                         │
+│  1. TraceFilter (레벨링)      → tracer.js 확장          │
+│     ├─ CORE / DETAIL / DEBUG 3단계 레벨                 │
+│     └─ DevTools UI에 레벨 토글 추가                      │
+│                                                         │
+│  2. TimeController (시간 제어) → time-controller.js 신규 │
+│     ├─ 클라이언트: window.__dtPauseTimers               │
+│     ├─ 서버: POST /api/__test/pause-timers 엔드포인트   │
+│     └─ 시나리오 실행 전후 자동 적용                      │
+│                                                         │
+│  3. ScenarioSetup (자동화)     → scenario-setup.js 신규  │
+│     ├─ silentCreatePost(): 트레이싱 OFF 상태로 글 생성  │
+│     ├─ TTL 시나리오: 글 생성 완료 → 트레이싱 ON → 관찰  │
+│     └─ 좋아요 시나리오: 글 생성 완료 → 트레이싱 ON      │
+│                                                         │
+│  4. TraceSyncController (동기화) → devtools-panel.js 수정│
+│     ├─ 트레이스 렌더링 중 서버 타이머 일시정지           │
+│     ├─ 렌더링 완료 후 타이머 재개                       │
+│     └─ 또는 글 유지시간 동적 연장 (TTL += 표시시간)      │
+│                                                         │
+└─────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 6. 구현 상세
+## 요구사항 1: 트레이싱 노이즈 필터링 및 가시성 확보
 
-### 6-A. tracer.js — 이벤트 버스
+### 문제
+현재 `trace()` 함수는 `traceEnabled` 여부만 체크하고 모든 타입을 동등하게 기록한다.
+ACTION, HOOK, STATE, EFFECT, VDOM, DIFF, PATCH, RENDER, UPDATE, MEMO 총 10가지 타입이
+전부 표시되어 핵심 상태 변경점을 빠르게 파악하기 어렵다.
 
-```js
-// trace 타입 정의 (useMemo용 MEMO 미리 포함)
-const TRACE_TYPES = {
-  ACTION:  { color: '#60a5fa', icon: '▶' },
-  HOOK:    { color: '#fbbf24', icon: '⚡' },   // useState
-  STATE:   { color: '#fbbf24', icon: '📦' },   // 상태 변경
-  EFFECT:  { color: '#f97316', icon: '🔄' },   // useEffect
-  MEMO:    { color: '#a78bfa', icon: '🧠' },   // useMemo (추후)
-  VDOM:    { color: '#c084fc', icon: '🌳' },   // VDOM 생성
-  DIFF:    { color: '#c084fc', icon: '🔍' },   // diff
-  PATCH:   { color: '#34d399', icon: '✏️' },   // patch
-  RENDER:  { color: '#34d399', icon: '✅' },   // 렌더 완료
+### 해결 방안
+
+**3단계 트레이스 레벨 시스템 도입:**
+
+| 레벨 | 표시 타입 | 용도 |
+|------|-----------|------|
+| `CORE` | ACTION, STATE, RENDER | 핵심 상태 변경만 (발표용) |
+| `DETAIL` | + HOOK, EFFECT, MEMO | 훅 동작 포함 (학습용) |
+| `DEBUG` | + VDOM, DIFF, PATCH, UPDATE | 전체 (디버깅용) |
+
+**수정 대상 파일:**
+
+#### `src/framework/tracer.js` 확장
+```javascript
+// 레벨 정의
+const TRACE_LEVELS = {
+  CORE: 0,    // 핵심만
+  DETAIL: 1,  // 훅 포함
+  DEBUG: 2,   // 전체
 };
 
-let traceEnabled = false;
-let traceLog = [];
-const listeners = [];
+// 각 타입의 레벨 매핑
+const TYPE_LEVEL = {
+  ACTION: TRACE_LEVELS.CORE,
+  STATE:  TRACE_LEVELS.CORE,
+  RENDER: TRACE_LEVELS.CORE,
+  HOOK:   TRACE_LEVELS.DETAIL,
+  EFFECT: TRACE_LEVELS.DETAIL,
+  MEMO:   TRACE_LEVELS.DETAIL,
+  UPDATE: TRACE_LEVELS.DEBUG,
+  VDOM:   TRACE_LEVELS.DEBUG,
+  DIFF:   TRACE_LEVELS.DEBUG,
+  PATCH:  TRACE_LEVELS.DEBUG,
+};
 
-export function trace(type, data) {
-  if (!traceEnabled) return;          // 꺼져있으면 성능 영향 0
-  const entry = { type, data, timestamp: performance.now() };
-  traceLog.push(entry);
-  listeners.forEach(fn => fn(entry)); // 실시간 UI 갱신
+let currentTraceLevel = TRACE_LEVELS.DETAIL; // 기본값
+
+export function setTraceLevel(level) {
+  currentTraceLevel = level;
 }
 
-export function onTrace(fn) { listeners.push(fn); }
-export function enableTrace() { traceEnabled = true; }
-export function disableTrace() { traceEnabled = false; }
-export function clearTrace() { traceLog = []; }
-export function getTraceLog() { return traceLog; }
+// 기존 trace() 수정
+export function trace(type, detail) {
+  if (!traceEnabled) return;
+  if (TYPE_LEVEL[type] > currentTraceLevel) return; // ★ 레벨 필터링
+
+  const entry = { id: traceSeq++, type, detail, timestamp: performance.now() };
+  traceHistory.push(entry);
+  if (traceHistory.length > 200) traceHistory.shift();
+  traceListeners.forEach(fn => fn(entry, [...traceHistory]));
+  return entry;
+}
 ```
 
-### 6-B. 프레임워크 trace 포인트 삽입
+#### `src/test/devtools-panel.js` — UI에 레벨 토글 추가
+```
+헤더 영역에 3-버튼 토글 추가:
+┌────────────────────────────────────┐
+│ ⚡ Flicker DevTools                │
+│ 레벨: [CORE] [DETAIL] [DEBUG]     │  ← 클릭으로 전환
+│ ...                                │
+└────────────────────────────────────┘
+```
 
-**hooks.js — useState:**
-```js
-export function useState(initialValue) {
-  const key = `${currentKey}:state:${hookIndex++}`;
-  const isNew = !hookStore.has(key);
-  if (isNew) {
-    hookStore.set(key, typeof initialValue === 'function' ? initialValue() : initialValue);
+- 선택된 레벨 버튼에 active 스타일 적용
+- 레벨 변경 시 `setTraceLevel()` 호출
+- 이미 수집된 로그도 현재 레벨에 맞게 필터링 표시
+
+### 로직 흐름
+```
+사용자가 레벨 버튼 클릭
+  → setTraceLevel(CORE)
+  → trace() 내부에서 TYPE_LEVEL[type] > currentTraceLevel이면 무시
+  → UI 리스너에게도 레벨 정보 전달
+  → 기존 표시된 항목 중 레벨 초과 항목 CSS display:none 처리
+```
+
+---
+
+## 요구사항 2: 시나리오별 시스템 시간(TTL/Timer) 제어
+
+### 문제
+- 클라이언트 측 `window.__dtPauseTimers`는 이미 있지만, PostCard의 setInterval만 제어
+- **서버의 1초 setInterval은 계속 TTL을 감소**시키므로 클라이언트-서버 불일치 발생
+- '로그인' 및 'TTL 검증' 시나리오를 제외한 나머지에서 시간 정지 필요
+
+### 해결 방안
+
+**클라이언트 + 서버 양쪽 시간 제어 동기화:**
+
+#### `server/index.js` — 테스트용 타이머 제어 엔드포인트 추가
+```javascript
+let serverTimersPaused = false;
+
+// 테스트 전용 엔드포인트
+app.post('/api/__test/pause-timers', (req, res) => {
+  serverTimersPaused = true;
+  res.json({ ok: true, paused: true });
+});
+
+app.post('/api/__test/resume-timers', (req, res) => {
+  // 정지 기간 동안의 경과시간을 무시하기 위해 lastSync 갱신
+  const now = Date.now();
+  for (const [id, post] of livePosts.entries()) {
+    post.lastSync = now;
   }
-  const value = hookStore.get(key);
+  serverTimersPaused = false;
+  res.json({ ok: true, paused: false });
+});
 
-  const setState = (newVal) => {
-    const prev = hookStore.get(key);
-    const resolved = typeof newVal === 'function' ? newVal(prev) : newVal;
-    if (resolved === prev) return;
+// 기존 setInterval 수정
+setInterval(() => {
+  if (serverTimersPaused) return; // ★ 정지 상태면 건너뜀
+  // ... 기존 TTL 감소 로직
+}, 1000);
+```
 
-    // ★ trace 삽입
-    trace('HOOK', {
-      hook: 'useState', key,
-      prev, next: resolved
-    });
-    trace('STATE', {
-      changed: diffObject(prev, resolved)
-    });
+#### `src/test/scenario-setup.js` — TimeController 유틸리티 (신규)
+```javascript
+export const TimeController = {
+  async pause() {
+    window.__dtPauseTimers = true;
+    await fetch('/api/__test/pause-timers', { method: 'POST' });
+  },
 
-    hookStore.set(key, resolved);
-    scheduleRender();
-  };
+  async resume() {
+    window.__dtPauseTimers = false;
+    await fetch('/api/__test/resume-timers', { method: 'POST' });
+  },
 
-  return [value, setState];
+  shouldPause(scenarioId) {
+    // 로그인, TTL 시나리오는 시간 정지 안 함
+    return !['login', 'ttl'].includes(scenarioId);
+  }
+};
+```
+
+#### `src/test/devtools-panel.js` — executeScenario 수정
+```javascript
+async function executeScenario(scenario) {
+  // 기존: const shouldPauseTimers = scenario.id !== 'ttl';
+  // 개선: 로그인도 제외
+  if (TimeController.shouldPause(scenario.id)) {
+    await TimeController.pause();
+  }
+
+  try {
+    await scenario.run();
+  } finally {
+    if (TimeController.shouldPause(scenario.id)) {
+      await TimeController.resume();
+    }
+  }
 }
 ```
 
-**hooks.js — useEffect:**
-```js
-// flushEffects 내부, shouldRun이 true일 때:
-trace('EFFECT', {
-  hook: 'useEffect', key,
-  deps, prevDeps,
-  hasCleanup: typeof prev.cleanup === 'function'
-});
+### 로직 흐름
 ```
-
-**hooks.js — useMemo (추후 구현 시):**
-```js
-// useMemo 내부:
-trace('MEMO', {
-  hook: 'useMemo', key,
-  deps, prevDeps,
-  cacheHit: shallowEqual(prevDeps, deps),   // true면 HIT, false면 MISS
-  result: cached ? '(캐시 사용)' : '(재계산)'
-});
+시나리오 실행 시작
+  → TimeController.shouldPause('like') === true
+  → TimeController.pause()
+     ├─ window.__dtPauseTimers = true  (클라이언트 타이머 정지)
+     └─ POST /api/__test/pause-timers  (서버 타이머 정지)
+  → scenario.run() 실행 (TTL 감소 없이 안전하게 테스트)
+  → TimeController.resume()
+     ├─ window.__dtPauseTimers = false
+     └─ POST /api/__test/resume-timers (lastSync 갱신 후 재개)
 ```
-
-**component.js — renderApp:**
-```js
-trace('VDOM', { component: 'App', childCount: newVTree.children?.length });
-trace('DIFF', {
-  patchCount: patches.length,
-  types: patches.map(p => p.type)
-});
-trace('PATCH', {
-  applied: patches.length,
-  duration: `${(performance.now() - start).toFixed(1)}ms`
-});
-trace('RENDER', {
-  totalChanges: patches.length,
-  duration: `${(performance.now() - renderStart).toFixed(1)}ms`
-});
-```
-
-### 6-C. scenarios.js — 시나리오 정의
-
-```js
-export const scenarios = [
-  {
-    id: 'like',
-    icon: '👍',
-    title: '좋아요 클릭',
-    description: 'useState로 likes/ttl 상태 변경 → VDOM diff → DOM 패치',
-    highlights: ['useState'],        // 강조할 훅
-    enabled: true,
-    run: async (app, trace) => { ... },
-    verify: (dom) => [
-      { label: 'likes 값이 증가했는가', check: () => ... },
-      { label: 'TTL이 리셋되었는가', check: () => ... },
-      { label: 'DOM에 반영되었는가', check: () => ... },
-      { label: '불필요한 노드 스킵', check: () => ... },
-    ]
-  },
-  {
-    id: 'ttl',
-    icon: '⏱️',
-    title: 'TTL 자동 감소',
-    highlights: ['useEffect'],
-    enabled: true,
-    run: async (app, trace) => { ... },
-    verify: ...
-  },
-  {
-    id: 'login',
-    icon: '🔑',
-    title: '로그인',
-    highlights: ['useState', 'useEffect'],
-    enabled: true,
-    run: async (app, trace) => { ... },
-    verify: ...
-  },
-  {
-    id: 'create-post',
-    icon: '✏️',
-    title: '글 작성',
-    highlights: ['useState', 'useEffect'],
-    enabled: true,
-    run: async (app, trace) => { ... },
-    verify: ...
-  },
-  {
-    id: 'memo',
-    icon: '🧠',
-    title: '메모이제이션 (useMemo)',
-    highlights: ['useMemo'],
-    enabled: false,                    // ← 추후 구현 시 true로 변경
-    disabledMessage: '다음 버전에서 구현 예정',
-    plannedVerify: [
-      'deps 변경 시 factory 재실행',
-      'deps 동일 시 캐시 반환 (재계산 스킵)',
-      '여러 useMemo 독립 동작',
-    ],
-    run: async (app, trace) => { ... },
-    verify: ...
-  },
-];
-```
-
-### 6-D. devtools-panel.js — UI 컴포넌트
-
-**기능:**
-- 🧪 플로팅 버튼 → 클릭 시 우측 슬라이드 패널
-- 시나리오 목록 화면 → 선택 시 실행 화면
-- trace 로그를 0.3초 간격으로 순차 렌더링 (타이핑 효과)
-- 각 단계별 색상 + 트리 구조 들여쓰기
-- 검증 결과를 마지막에 표시
-- useMemo 시나리오는 비활성 상태 + 안내 메시지
 
 ---
 
-## 7. 구현 순서
+## 요구사항 3: TTL 시나리오의 사전 작업(Setup) 자동화 및 은닉
 
-### Phase 1: tracer 기반 (핵심)
-1. `src/framework/tracer.js` 생성 — trace() + 이벤트 버스 + MEMO 타입 포함
-2. `hooks.js` 수정 — useState, useEffect에 trace 삽입 + useMemo 자리 확보
-3. `component.js` 수정 — renderApp에 trace 삽입
-4. `vdom.js` 수정 — diff, patch에 trace 삽입
+### 문제
+- TTL 만료를 테스트하려면 게시글이 필요하지만 수동으로 작성해야 함
+- 글 작성 중 이미 타이머가 동작하여 정확한 TTL 측정 불가
+- 글 생성 과정이 트레이싱에 섞여 노이즈가 됨
 
-### Phase 2: 시나리오 정의
-1. `src/test/scenarios.js` 생성 — 5개 시나리오 (useMemo는 enabled:false)
-2. 각 시나리오의 run() 함수 구현
-3. 각 시나리오의 verify() 함수 구현
+### 해결 방안
 
-### Phase 3: DevTools UI
-1. `public/styles/devtools.css` 생성 — 다크 터미널 스타일
-2. `src/test/devtools-panel.js` 생성 — 패널 UI + 시나리오 실행 + 트레이스 렌더링
-3. 앱에 플로팅 버튼 연결
+**Silent Setup 패턴 — 트레이싱 OFF 상태에서 백그라운드 글 생성:**
 
-### Phase 4: 정리
-1. 기존 test-runner.js, hook-tests.js, integration-tests.js 보관/삭제
-2. test.html 업데이트 또는 제거
-3. 전체 시나리오 실행 확인
+#### `src/test/scenario-setup.js` — silentCreatePost (신규)
+```javascript
+import { setTraceEnabled } from '../framework/tracer.js';
+
+export async function silentCreatePost(username, text = '테스트 게시글') {
+  // 1. 트레이싱 OFF (이미 꺼져있어도 안전)
+  const wasEnabled = traceEnabled;
+  setTraceEnabled(false);
+
+  // 2. 서버 타이머 정지 (생성 중 TTL 감소 방지)
+  await TimeController.pause();
+
+  // 3. API로 직접 게시글 생성 (UI를 거치지 않음)
+  const res = await fetch('/api/posts', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, text }),
+  });
+  const data = await res.json();
+
+  // 4. 서버 타이머 재개 (TTL 시나리오에서는 여기서부터 시작)
+  await TimeController.resume();
+
+  // 5. 트레이싱 상태 복원 (아직 ON하지 않음 — 호출자가 제어)
+  setTraceEnabled(wasEnabled);
+
+  return data;
+}
+```
+
+#### `src/test/scenarios.js` — TTL 시나리오 수정
+```javascript
+{
+  id: 'ttl',
+  icon: '⏱️',
+  title: 'TTL 자동 감소',
+
+  // ★ Setup 단계 추가
+  async setup() {
+    // Silent: 트레이싱 없이 게시글 생성
+    const data = await silentCreatePost(getUsername(), 'TTL 테스트 게시글');
+    this._targetPostId = data.livePosts?.[0]?.id;
+    // 이 시점에서 TTL=10, 서버 타이머 재개됨
+  },
+
+  async run() {
+    // 트레이싱은 이 시점부터 시작됨
+    // 이미 존재하는 게시글의 TTL 감소를 관찰
+    trace('ACTION', {
+      action: 'ttl-observe',
+      message: `⏱️ TTL 타이머 관찰 시작 — 게시물 #${this._targetPostId}`,
+    });
+
+    // 피드 새로고침하여 생성된 글 표시
+    await navigateToFeed();
+
+    // TTL 감소 관찰 (3.5초)
+    await wait(3500);
+  },
+
+  // Teardown은 별도로 필요 없음 (글은 자연 만료)
+}
+```
+
+### 로직 흐름
+```
+[DevTools] 시나리오 실행 버튼 클릭
+  │
+  ├─ [Silent Setup Phase] ← 트레이싱 기록 안 됨
+  │   ├─ setTraceEnabled(false)
+  │   ├─ TimeController.pause()
+  │   ├─ POST /api/posts → 게시글 생성 (TTL=10)
+  │   └─ TimeController.resume() → 이 시점부터 서버 TTL 감소 시작
+  │
+  ├─ [Trace Phase] ← 여기서부터 트레이싱 기록
+  │   ├─ setTraceEnabled(true)
+  │   ├─ addTraceListener(collector)
+  │   ├─ scenario.run() 시작
+  │   │   ├─ [ACTION] TTL 관찰 시작
+  │   │   ├─ [EFFECT] useEffect 타이머 등록
+  │   │   ├─ [HOOK] useState (ttl: 10 → 9)
+  │   │   ├─ [STATE] → [VDOM] → [DIFF] → [PATCH] → [RENDER]
+  │   │   └─ ... 반복 (9→8→7→...)
+  │   └─ removeTraceListener()
+  │
+  └─ [Display Phase]
+      └─ 수집된 트레이스를 순차 렌더링
+```
 
 ---
 
-## 8. useMemo 추후 연결 가이드
+## 요구사항 4: '좋아요' 시나리오 사전 작업 자동화
 
-useMemo를 hooks.js에 구현한 후:
+### 문제
+- 좋아요를 테스트하려면 대상 게시글이 필요하지만 수동 생성
+- 게시글 생성 과정이 트레이싱에 포함되어 본래 목적(좋아요 상태변경)이 묻힘
 
-1. **hooks.js**에 `useMemo` 함수 추가
-   ```js
-   export function useMemo(factory, deps) {
-     const key = `${currentKey}:memo:${hookIndex++}`;
-     const prev = hookStore.get(key);
-     const prevDeps = prev?.deps;
+### 해결 방안
 
-     if (prev && shallowEqual(prevDeps, deps)) {
-       trace('MEMO', { hook: 'useMemo', key, cacheHit: true });
-       return prev.value;
-     }
+**요구사항 3과 동일한 Silent Setup 패턴 적용:**
 
-     const value = factory();
-     trace('MEMO', { hook: 'useMemo', key, cacheHit: false, deps });
-     hookStore.set(key, { value, deps: [...deps] });
-     return value;
-   }
-   ```
+#### `src/test/scenarios.js` — 좋아요 시나리오 수정
+```javascript
+{
+  id: 'like',
+  icon: '👍',
+  title: '좋아요 클릭',
 
-2. **scenarios.js**에서 `enabled: true`로 변경
+  // ★ Setup 단계 추가
+  async setup() {
+    // Silent: 트레이싱 없이 게시글 생성
+    await silentCreatePost(getUsername(), '좋아요 테스트 게시글');
+    // 피드에 글이 준비된 상태
+  },
 
-3. 끝. tracer와 UI는 이미 MEMO 타입을 지원하므로 추가 작업 없음.
+  async run() {
+    // 트레이싱은 이 시점부터 시작
+    // 피드로 이동하여 좋아요 버튼 찾기
+    await navigateToFeed();
+    await wait(500); // 렌더링 대기
+
+    const likeBtn = document.querySelector('.post-card__like-btn');
+    if (!likeBtn) throw new Error('좋아요 버튼을 찾을 수 없습니다');
+
+    trace('ACTION', {
+      action: 'like',
+      message: '👍 사용자가 좋아요를 눌렀습니다',
+    });
+
+    likeBtn.click();
+    await wait(1800);
+  },
+}
+```
+
+### 라이프사이클 분리
+```
+[Silent Setup]           [Trace Recording]
+──────────────           ─────────────────
+ 글 생성 (API)    →→→    좋아요 클릭 시점부터 기록
+ 트레이싱 OFF             트레이싱 ON
+ 타이머 정지              타이머 정지 (like는 TTL 불필요)
+```
 
 ---
 
-## 9. 발표 데모 시나리오
+## 요구사항 5: 글 작성 시나리오 UI↔트레이싱 타이밍 동기화
 
-### 추천 순서 (3분)
+### 문제
+- `scenario.run()` 실행 → 글 작성 → 서버 저장 → 피드 이동
+- 이후 트레이스 렌더링이 300ms × N그룹만큼 소요
+- 렌더링 중에 서버 TTL이 계속 감소 → 글이 트레이스 표시 전에 사라짐
 
-1. 앱에서 `🧪` 버튼 클릭 → DevTools 패널 열림
-   > "저희가 만든 프레임워크의 내부 동작을 추적하는 DevTools입니다"
+### 해결 방안
 
-2. **👍 좋아요 클릭** 시나리오 선택 → 실행
-   > "좋아요를 누르면 useState가 상태를 변경하고,
-   >  Virtual DOM을 새로 만들고, 이전 트리와 비교해서
-   >  바뀐 2개 노드만 실제 DOM에 패치합니다"
+**2단계 접근: 타이머 정지 + 동적 TTL 연장**
 
-3. **⏱️ TTL 자동 감소** 시나리오 선택 → 실행
-   > "useEffect로 타이머를 등록하고, TTL이 0이 되면
-   >  cleanup 함수가 clearInterval을 호출합니다.
-   >  React의 useEffect cleanup과 동일한 원리입니다"
+#### 방안 A: 트레이스 렌더링 중 타이머 정지 (권장)
+```javascript
+// devtools-panel.js — executeScenario 수정
 
-4. **🧠 메모이제이션** 시나리오 (비활성)
-   > "useMemo는 다음 버전에서 구현 예정이고,
-   >  DevTools에는 이미 자리를 잡아두었습니다"
+async function executeScenario(scenario) {
+  // Phase 1: Setup (Silent)
+  if (scenario.setup) {
+    await scenario.setup();
+  }
 
-5. 마무리
-   > "이 DevTools를 통해 React가 내부에서 하는 일을
-   >  저희가 직접 구현하고, 추적하고, 검증할 수 있습니다"
+  // Phase 2: Run (Trace Collection)
+  if (TimeController.shouldPause(scenario.id)) {
+    await TimeController.pause();
+  }
+  setTraceEnabled(true);
+  const collected = [];
+  const listener = (entry) => collected.push(entry);
+  addTraceListener(listener);
+
+  try {
+    await scenario.run();
+  } finally {
+    setTraceEnabled(false);
+    removeTraceListener(listener);
+  }
+
+  // Phase 3: Display (★ 타이머 여전히 정지 상태)
+  // → 트레이스 렌더링이 완료될 때까지 글이 사라지지 않음
+  const groups = groupByCycle(collected);
+  for (const group of groups) {
+    renderTraceGroup(group);
+    await wait(300); // 순차 애니메이션
+  }
+
+  // Phase 4: Verify
+  const results = scenario.verify();
+  renderVerifyResults(results);
+
+  // Phase 5: Cleanup — 이제야 타이머 재개
+  if (TimeController.shouldPause(scenario.id)) {
+    await TimeController.resume();
+  }
+}
+```
+
+**핵심:** Phase 2(실행) → Phase 3(표시) → Phase 5(타이머 재개)로 이어져서,
+트레이스가 모두 표시되고 검증까지 끝난 후에야 TTL 감소가 재개된다.
+
+#### 방안 B: 동적 TTL 연장 (보조)
+```javascript
+// 트레이스 렌더링 예상 시간만큼 TTL 연장
+const displayDuration = groups.length * 300 + 1000; // 여유분 1초
+const extensionSeconds = Math.ceil(displayDuration / 1000);
+
+// 서버에 TTL 연장 요청
+await fetch('/api/__test/extend-ttl', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ postId: targetPostId, extraSeconds: extensionSeconds }),
+});
+```
+
+`server/index.js`에 추가:
+```javascript
+app.post('/api/__test/extend-ttl', (req, res) => {
+  const { postId, extraSeconds } = req.body;
+  const post = livePosts.get(postId);
+  if (post) {
+    post.ttl += extraSeconds;
+    res.json({ ok: true, newTtl: post.ttl });
+  } else {
+    res.status(404).json({ ok: false });
+  }
+});
+```
+
+### 권장: 방안 A를 기본으로, 방안 B는 선택적 보조
+
+방안 A만으로 충분히 해결되지만, '글 작성' 시나리오는 작성 후 피드에서 글을 볼 수 있어야 하므로
+타이머 재개 후에도 글이 일정 시간 유지되도록 방안 B를 보조적으로 사용할 수 있다.
+
+### 로직 흐름 (글 작성 시나리오)
+```
+[Silent Setup]
+  └─ 없음 (글 작성 자체가 시나리오)
+
+[Run Phase] 타이머 정지 상태
+  ├─ TimeController.pause()
+  ├─ 텍스트 입력 → 제출 → API 호출 → 피드 이동
+  ├─ 트레이스 수집: ACTION → HOOK → STATE → VDOM → DIFF → PATCH → RENDER
+  └─ scenario.run() 완료
+
+[Display Phase] ★ 타이머 여전히 정지 ★
+  ├─ 300ms 간격 순차 렌더링
+  ├─ 사용자가 트레이스를 충분히 확인
+  └─ 피드에 새 글이 계속 표시됨
+
+[Verify Phase]
+  └─ 검증 결과 표시
+
+[Cleanup Phase]
+  ├─ TimeController.resume() → 이제 TTL 감소 시작
+  └─ 글은 이후 자연 만료 (사용자가 이미 확인 완료)
+```
+
+---
+
+## 핵심 유틸리티 설계: `src/test/scenario-setup.js` (신규)
+
+```javascript
+import { setTraceEnabled } from '../framework/tracer.js';
+
+/**
+ * TimeController — 클라이언트/서버 타이머 동기 제어
+ */
+export const TimeController = {
+  async pause() {
+    window.__dtPauseTimers = true;
+    try {
+      await fetch('/api/__test/pause-timers', { method: 'POST' });
+    } catch (e) {
+      console.warn('[TimeController] 서버 타이머 정지 실패:', e);
+    }
+  },
+
+  async resume() {
+    try {
+      await fetch('/api/__test/resume-timers', { method: 'POST' });
+    } catch (e) {
+      console.warn('[TimeController] 서버 타이머 재개 실패:', e);
+    }
+    window.__dtPauseTimers = false;
+  },
+
+  shouldPause(scenarioId) {
+    return !['login', 'ttl'].includes(scenarioId);
+  }
+};
+
+/**
+ * silentCreatePost — 트레이싱 없이 게시글 백그라운드 생성
+ * @param {string} username
+ * @param {string} text
+ * @returns {Promise<Object>} 생성 결과 (livePosts, myPosts)
+ */
+export async function silentCreatePost(username, text = '테스트 게시글') {
+  setTraceEnabled(false);
+  await TimeController.pause();
+
+  const res = await fetch('/api/posts', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, text }),
+  });
+  const data = await res.json();
+
+  await TimeController.resume();
+  return data;
+}
+
+/**
+ * silentLogin — 트레이싱 없이 로그인 수행
+ * @param {string} username
+ * @returns {Promise<Object>} 로그인 결과
+ */
+export async function silentLogin(username) {
+  setTraceEnabled(false);
+
+  const res = await fetch('/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username }),
+  });
+  const data = await res.json();
+
+  if (data.ok) {
+    localStorage.setItem('username', username);
+  }
+  return data;
+}
+
+/**
+ * getUsername — 현재 로그인된 사용자명 가져오기
+ * 없으면 silentLogin 수행
+ */
+export async function ensureLoggedIn(defaultUser = 'testuser') {
+  let username = localStorage.getItem('username');
+  if (!username) {
+    await silentLogin(defaultUser);
+    username = defaultUser;
+  }
+  return username;
+}
+```
+
+---
+
+## 수정 대상 파일 요약
+
+| 파일 | 변경 유형 | 요구사항 |
+|------|-----------|----------|
+| `src/framework/tracer.js` | 수정 | #1 레벨링 시스템 |
+| `src/test/scenario-setup.js` | **신규** | #2,3,4 TimeController + silentCreatePost |
+| `src/test/scenarios.js` | 수정 | #3,4 setup() 추가 |
+| `src/test/devtools-panel.js` | 수정 | #1 레벨 UI, #2,5 실행 흐름 |
+| `server/index.js` | 수정 | #2 타이머 제어 엔드포인트, #5 TTL 연장 |
+| `public/styles/devtools.css` | 수정 | #1 레벨 토글 스타일 |
+
+---
+
+## 구현 순서
+
+### Phase A: 기반 인프라
+1. `src/framework/tracer.js` — 레벨 시스템 추가 (요구사항 1)
+2. `server/index.js` — 테스트 엔드포인트 추가 (요구사항 2)
+3. `src/test/scenario-setup.js` — 유틸리티 신규 생성 (요구사항 2,3,4)
+
+### Phase B: 시나리오 개선
+4. `src/test/scenarios.js` — TTL 시나리오 setup() 추가 (요구사항 3)
+5. `src/test/scenarios.js` — 좋아요 시나리오 setup() 추가 (요구사항 4)
+6. `src/test/scenarios.js` — 글 작성 시나리오 타이밍 대응 (요구사항 5)
+
+### Phase C: DevTools UI 통합
+7. `src/test/devtools-panel.js` — 레벨 토글 UI 추가 (요구사항 1)
+8. `src/test/devtools-panel.js` — executeScenario 흐름 리팩토링 (요구사항 2,5)
+9. `public/styles/devtools.css` — 레벨 토글 스타일 (요구사항 1)
+
+### Phase D: 통합 테스트
+10. 전체 시나리오 실행 확인 및 엣지 케이스 점검

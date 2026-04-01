@@ -78,7 +78,7 @@ export function App() {
   endComponent();
 
   return createElement('div', { class: 'app' },
-    isLoggedIn ? Header() : createElement('span', {}),
+    Header(),
     createElement('main', { class: 'main' }, page)
   );
 }

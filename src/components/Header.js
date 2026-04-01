@@ -12,9 +12,9 @@ export function Header() {
     navigate('#/login');
   };
 
-  if (!username || route === '#/login') return createElement('span', {});
+  const hidden = !username || route === '#/login';
 
-  return createElement('header', { class: 'header' },
+  return createElement('header', { class: hidden ? 'header header--hidden' : 'header' },
     createElement('div', { class: 'header__inner' },
       createElement('a', { class: 'header__logo', onClick: () => navigate('#/feed') },
         createElement('span', { class: 'header__logo-mark' },
@@ -29,7 +29,7 @@ export function Header() {
           class: 'btn btn-primary btn-sm',
           onClick: () => navigate('#/create'),
         }, '공유'),
-        createElement('span', { class: 'header__username' }, `@${username}`),
+        createElement('span', { class: 'header__username' }, username ? `@${username}` : ''),
         createElement('button', {
           class: 'btn btn-ghost btn-sm',
           onClick: handleLogout,

@@ -12,6 +12,8 @@ const users = new Set();          // 닉네임 Set
 const livePosts = new Map();      // id → 공개 피드용 post 객체
 const archivedPosts = new Map();  // username → Map<id, postSnapshot>
 
+let serverTimersPaused = false;   // 테스트용 타이머 일시정지 플래그
+
 function getUserArchive(username) {
   if (!archivedPosts.has(username)) {
     archivedPosts.set(username, new Map());
@@ -21,6 +23,7 @@ function getUserArchive(username) {
 
 // ── 서버 TTL 관리 (1초마다 감소) ─────────────────────────
 setInterval(() => {
+  if (serverTimersPaused) return; // 테스트 중 일시정지
   const now = Date.now();
   for (const [id, post] of livePosts.entries()) {
     const elapsed = (now - post.lastSync) / 1000;
@@ -93,6 +96,45 @@ app.post('/api/auth/login', (req, res) => {
   const name = username.trim();
   users.add(name);
   res.json({ ok: true, username: name });
+});
+
+// ── 테스트용 타이머 제어 ──────────────────────────────────
+app.post('/api/__test/pause-timers', (req, res) => {
+  serverTimersPaused = true;
+  res.json({ ok: true, paused: true });
+});
+
+app.post('/api/__test/resume-timers', (req, res) => {
+  // 정지 기간의 경과시간 무시를 위해 lastSync 갱신
+  const now = Date.now();
+  for (const post of livePosts.values()) {
+    post.lastSync = now;
+  }
+  serverTimersPaused = false;
+  res.json({ ok: true, paused: false });
+});
+
+// TTL 연장 (트레이스 표시 시간 확보용)
+app.post('/api/__test/extend-ttl', (req, res) => {
+  const { postId, extraSeconds } = req.body;
+  if (postId) {
+    const post = livePosts.get(postId);
+    if (post) {
+      post.ttl = Math.max(post.ttl, 0) + (extraSeconds || 5);
+      const archived = getUserArchive(post.author).get(postId);
+      if (archived) archived.ttl = post.ttl;
+      return res.json({ ok: true, newTtl: post.ttl });
+    }
+    return res.status(404).json({ ok: false, message: '포스트를 찾을 수 없습니다.' });
+  }
+  // postId 없으면 모든 live 포스트 연장
+  const extra = extraSeconds || 5;
+  for (const post of livePosts.values()) {
+    post.ttl = Math.max(post.ttl, 0) + extra;
+    const archived = getUserArchive(post.author).get(post.id);
+    if (archived) archived.ttl = post.ttl;
+  }
+  res.json({ ok: true, extended: livePosts.size });
 });
 
 // ── Posts ─────────────────────────────────────────────────

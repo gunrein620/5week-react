@@ -8,7 +8,11 @@ import {
   addTraceListener,
   removeTraceListener,
   TRACE_TYPES,
+  TRACE_LEVELS,
+  setTraceLevel,
+  getTraceLevel,
 } from '../framework/tracer.js';
+import { TimeController } from './scenario-setup.js';
 
 // ── 내부 상태 ──────────────────────────────────────────────────────────────────
 let panelOpen = false;
@@ -34,17 +38,68 @@ function getTypeInfo(type) {
 }
 
 // ── trace detail 포맷팅 ───────────────────────────────────────────────────────
+
+// 대용량/노이즈 데이터 정제 헬퍼
+const IMAGE_KEYS = new Set(['imageData', 'preview', 'base64', 'dataUrl', 'src']);
+const MAX_STR_LEN = 100;
+
+function sanitizeValue(value, key = '') {
+  if (value === null || value === undefined) return value;
+
+  // 이미지/base64 데이터 은닉
+  if (IMAGE_KEYS.has(key) || (typeof value === 'string' && value.startsWith('data:'))) {
+    return `[image omitted, length: ${String(value).length}]`;
+  }
+
+  if (typeof value === 'string') {
+    return value.length > MAX_STR_LEN ? value.slice(0, MAX_STR_LEN) + '…' : value;
+  }
+
+  if (Array.isArray(value)) {
+    if (value.length === 0) return '[] (0개)';
+    const first = value[0];
+    const summary = first && typeof first === 'object'
+      ? JSON.stringify(sanitizeObject(first)).slice(0, 80)
+      : String(first).slice(0, 80);
+    return `[배열 ${value.length}개] 첫 항목: ${summary}`;
+  }
+
+  if (typeof value === 'object') {
+    return sanitizeObject(value);
+  }
+
+  return value;
+}
+
+function sanitizeObject(obj) {
+  if (!obj || typeof obj !== 'object') return obj;
+  const result = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (IMAGE_KEYS.has(k) || (typeof v === 'string' && v.startsWith('data:'))) {
+      result[k] = `[image omitted, length: ${String(v).length}]`;
+    } else if (typeof v === 'string' && v.length > MAX_STR_LEN) {
+      result[k] = v.slice(0, MAX_STR_LEN) + '…';
+    } else if (Array.isArray(v)) {
+      result[k] = `[배열 ${v.length}개]`;
+    } else {
+      result[k] = v;
+    }
+  }
+  return result;
+}
+
 function formatDetail(type, detail) {
   if (!detail || typeof detail !== 'object') return '';
 
   const rows = [];
   const tree = (label, value, isLast = false) => {
     const prefix = isLast ? '└─' : '├─';
-    const valStr = value === null || value === undefined
+    const sanitized = sanitizeValue(value, label);
+    const valStr = sanitized === null || sanitized === undefined
       ? '<span style="color:#4b5563">null</span>'
-      : typeof value === 'object'
-        ? `<span style="color:#9ca3af">${esc(JSON.stringify(value))}</span>`
-        : `<span style="color:#e2e8f0">${esc(String(value))}</span>`;
+      : typeof sanitized === 'object'
+        ? `<span style="color:#9ca3af">${esc(JSON.stringify(sanitized))}</span>`
+        : `<span style="color:#e2e8f0">${esc(String(sanitized))}</span>`;
     rows.push(`<span style="color:#4b5563">${prefix}</span> <span style="color:#9ca3af">${esc(label)}</span> : ${valStr}`);
   };
 
@@ -63,11 +118,11 @@ function formatDetail(type, detail) {
       if (hookIndex !== undefined) tree('hookIndex', hookIndex);
       if (key) tree('key', key.split(':').slice(-2).join(':'));
       if (phase === 'read' && value !== undefined) {
-        tree('value', typeof value === 'object' ? JSON.stringify(value) : value, true);
+        tree('value', value, true);
       }
       if (phase === 'set') {
-        if (prev !== undefined) tree('이전 state', typeof prev === 'object' ? JSON.stringify(prev) : prev);
-        if (next !== undefined) tree('새 state', typeof next === 'object' ? JSON.stringify(next) : next);
+        if (prev !== undefined) tree('이전 state', prev);
+        if (next !== undefined) tree('새 state', next);
         if (bailout !== undefined) tree('bailout', bailout, true);
       }
       if (deps !== undefined) tree('deps', JSON.stringify(deps), true);
@@ -78,8 +133,8 @@ function formatDetail(type, detail) {
       const { reason, prev, next, changedKeys } = detail;
       if (reason) tree('reason', reason);
       if (changedKeys?.length) tree('changedKeys', changedKeys.map(k => k.split(':').pop()).join(', '));
-      if (prev !== undefined) tree('이전', typeof prev === 'object' ? JSON.stringify(prev) : prev);
-      if (next !== undefined) tree('새 값', typeof next === 'object' ? JSON.stringify(next) : next, true);
+      if (prev !== undefined) tree('이전', prev);
+      if (next !== undefined) tree('새 값', next, true);
       break;
     }
 
@@ -454,10 +509,32 @@ async function executeScenario(scenario) {
   if (verifyEl) verifyEl.innerHTML = '';
   if (backBtn)  backBtn.disabled   = true;
 
-  // 수집된 trace 엔트리
-  const collected = [];
+  // ── Phase 1: Silent Setup ─────────────────────────────────────────────────
+  // setup()이 있으면 트레이싱 OFF 상태로 사전 작업 수행
+  // (게시글 생성, 로그인 보장 등 — 트레이스에 기록되지 않음)
+  if (typeof scenario.setup === 'function') {
+    const setupEl = document.createElement('div');
+    setupEl.className = 'dt-running-indicator';
+    setupEl.innerHTML = `<div class="dt-spinner"></div><span>사전 준비 중...</span>`;
+    if (outputEl) outputEl.appendChild(setupEl);
 
-  // trace 리스너 등록 (실행 중 수집)
+    try {
+      await scenario.setup();
+    } catch (err) {
+      console.error('[DevTools] setup 오류:', err);
+    }
+
+    if (outputEl) outputEl.innerHTML = '';
+  }
+
+  // ── Phase 2: Run (Trace Collection) ──────────────────────────────────────
+  // 타이머 정지 + 트레이싱 ON + 시나리오 실행
+  const shouldPause = TimeController.shouldPause(scenario.id);
+  if (shouldPause) {
+    await TimeController.pause();
+  }
+
+  const collected = [];
   const listener = (entry) => {
     if (entry) collected.push(entry);
   };
@@ -465,11 +542,6 @@ async function executeScenario(scenario) {
   clearTraceHistory();
   setTraceEnabled(true);
 
-  // 시나리오에서 배경 타이머 중지를 원하면 플래그 설정 (TTL 시나리오는 제외)
-  const shouldPauseTimers = scenario.id !== 'ttl';
-  if (shouldPauseTimers) window.__dtPauseTimers = true;
-
-  // 실행 중 표시
   const runningEl = document.createElement('div');
   runningEl.className = 'dt-running-indicator';
   runningEl.innerHTML = `<div class="dt-spinner"></div><span>시나리오 실행 중...</span>`;
@@ -482,16 +554,14 @@ async function executeScenario(scenario) {
   } finally {
     setTraceEnabled(false);
     removeTraceListener(listener);
-    window.__dtPauseTimers = false;
   }
 
-  // 실행 완료 — running indicator 제거
   if (outputEl) outputEl.innerHTML = '';
 
-  // 수집된 trace를 렌더 사이클 그룹으로 묶기
+  // ── Phase 3: Display ──────────────────────────────────────────────────────
+  // 타이머는 아직 정지 상태 — 트레이스 렌더링 중 글이 사라지지 않음
   const groups = groupTraceEntries(collected);
 
-  // 그룹별 순차 표시
   for (const group of groups) {
     await wait(300);
     if (!panelOpen || view !== 'run') break;
@@ -524,7 +594,7 @@ async function executeScenario(scenario) {
 
   await wait(300);
 
-  // 검증 결과 표시
+  // ── Phase 4: Verify ───────────────────────────────────────────────────────
   if (verifyEl) {
     let verifyResults = [];
     try {
@@ -551,6 +621,13 @@ async function executeScenario(scenario) {
     }
   }
 
+  // ── Phase 5: Cleanup ──────────────────────────────────────────────────────
+  // 트레이스 표시 + 검증이 끝난 후에야 타이머 재개
+  // → 글 작성 시나리오에서 피드 표시를 확인한 뒤 TTL 감소 시작
+  if (shouldPause) {
+    await TimeController.resume();
+  }
+
   isRunning = false;
   if (backBtn) backBtn.disabled = false;
 }
@@ -573,6 +650,14 @@ function createPanel() {
       <div class="dt-header-right">
         <button class="dt-btn-close" id="dt-close-btn" title="닫기">✕</button>
       </div>
+    </div>
+
+    <!-- 레벨 토글 -->
+    <div class="dt-level-bar">
+      <span class="dt-level-label">레벨:</span>
+      <button class="dt-level-btn" data-level="0" title="핵심 상태 변경만 표시">CORE</button>
+      <button class="dt-level-btn dt-level-btn--active" data-level="1" title="훅 동작 포함 (기본)">DETAIL</button>
+      <button class="dt-level-btn" data-level="2" title="VDOM/DIFF/PATCH 포함">DEBUG</button>
     </div>
 
     <!-- 리스트 뷰 -->
@@ -613,6 +698,16 @@ function createPanel() {
   panelEl.querySelector('#dt-close-btn').addEventListener('click', () => {
     panelOpen = false;
     panelEl.classList.remove('open');
+  });
+
+  // 레벨 토글
+  panelEl.querySelectorAll('.dt-level-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const level = parseInt(btn.dataset.level, 10);
+      setTraceLevel(level);
+      panelEl.querySelectorAll('.dt-level-btn').forEach(b => b.classList.remove('dt-level-btn--active'));
+      btn.classList.add('dt-level-btn--active');
+    });
   });
 
   // 초기화

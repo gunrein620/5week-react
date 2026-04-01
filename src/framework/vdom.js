@@ -264,7 +264,8 @@ export function buildIndexMap(node, map, idx) {
   map.set(idx.v, node);
   if (node.nodeType !== Node.ELEMENT_NODE) return map;
   for (const child of node.childNodes) {
-    if (child.nodeType === Node.TEXT_NODE && !child.textContent.trim()) continue;
+    // countNodes는 모든 텍스트 VNode를 1로 계산하므로 buildIndexMap도 동일하게 처리
+    // (빈 텍스트 노드 스킵 시 인덱스 불일치 발생)
     idx.v++;
     buildIndexMap(child, map, idx);
   }

@@ -3,6 +3,11 @@
 
 import { trace } from '../framework/tracer.js';
 import { navigate } from '../framework/router.js';
+import {
+  TimeController,
+  silentCreatePost,
+  ensureLoggedIn,
+} from './scenario-setup.js';
 
 // ── 헬퍼 ──────────────────────────────────────────────────────────────────────
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -45,17 +50,31 @@ export const scenarios = [
     highlights: ['useState'],
     enabled: true,
 
+    // Silent Setup: 트레이싱 없이 대상 게시글 자동 생성
+    async setup() {
+      const username = await ensureLoggedIn();
+      const data = await silentCreatePost(username, '좋아요 테스트 게시글 🧪');
+      this._setupPostId = data.livePosts?.[0]?.id || null;
+    },
+
     async run() {
       // 피드로 이동
       navigate('#/feed');
-      await wait(400);
 
-      // 좋아요 누를 수 있는 첫 번째 포스트 찾기 (이미 눌렀거나 로딩 중인 것 제외)
+      // setup에서 생성한 게시글이 DOM에 나타날 때까지 대기 (최대 6초)
+      const appeared = await waitFor(
+        () => Boolean(document.querySelector(
+          '.post-card__like-btn:not(.post-card__like-btn--liked):not(.post-card__like-btn--loading)'
+        )),
+        6000
+      );
+
+      // 좋아요 누를 수 있는 첫 번째 포스트 찾기
       const btn = document.querySelector(
         '.post-card__like-btn:not(.post-card__like-btn--liked):not(.post-card__like-btn--loading)'
       );
 
-      if (!btn) {
+      if (!btn || !appeared) {
         trace('ACTION', {
           message: '좋아요를 누를 수 있는 게시물이 없습니다. (모두 이미 좋아요 완료)',
           result: 'skip',
@@ -108,6 +127,18 @@ export const scenarios = [
     description: 'useEffect 타이머 등록 + 매초 상태 감소 + cleanup',
     highlights: ['useEffect'],
     enabled: true,
+
+    // Silent Setup: 트레이싱 없이 게시글 생성
+    // 생성 완료 직후 서버 타이머 재개 → 이 시점부터 TTL 카운트 시작
+    async setup() {
+      const username = await ensureLoggedIn();
+      const data = await silentCreatePost(username, 'TTL 타이머 테스트 게시글 ⏱️');
+      this._setupPostId = data.livePosts?.[0]?.id || null;
+      // TTL을 5초 연장하여 관찰 시간 확보 (기본 10초 → 15초)
+      if (this._setupPostId) {
+        await TimeController.extendTtl(this._setupPostId, 5);
+      }
+    },
 
     async run() {
       navigate('#/feed');
@@ -231,6 +262,11 @@ export const scenarios = [
     description: '입력 → 검증 → 상태 반영 → API 호출 → 피드 이동',
     highlights: ['useState'],
     enabled: true,
+
+    // Silent Setup: 로그인 상태 보장
+    async setup() {
+      await ensureLoggedIn();
+    },
 
     async run() {
       // 로그인 상태 확인

@@ -148,6 +148,10 @@ body {
   box-shadow: 0 1px 0 var(--border), 0 2px 8px rgba(0,0,0,0.04);
 }
 
+.header--hidden {
+  display: none;
+}
+
 .header__inner {
   max-width: 680px;
   margin: 0 auto;
