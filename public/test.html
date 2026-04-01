@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Flicker — 테스트 페이지</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0a0a0a;
+      color: #e2e8f0;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      min-height: 100vh;
+      padding: 24px;
+    }
+
+    #app-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid #262626;
+    }
+
+    #app-header h1 {
+      font-size: 22px;
+      font-weight: 700;
+      color: #f8fafc;
+    }
+
+    #app-header .subtitle {
+      font-size: 13px;
+      color: #71717a;
+      margin-top: 2px;
+    }
+
+    #controls {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    button.action-btn {
+      background: #3b82f6;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      padding: 8px 18px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    button.action-btn:hover { background: #2563eb; }
+    button.action-btn:disabled { background: #374151; cursor: default; }
+
+    #runner-status {
+      font-size: 13px;
+      color: #94a3b8;
+      max-width: 320px;
+      line-height: 1.5;
+    }
+
+    #result-container {
+      max-width: 860px;
+    }
+
+    /* 노드 패치 애니메이션 (앱에서 재사용) */
+    .node-patched {
+      outline: 2px solid #3b82f6;
+      transition: outline 0.6s ease-out;
+    }
+  </style>
+</head>
+<body>
+
+<div id="app-header">
+  <div>
+    <h1>⚡ Flicker Test Runner</h1>
+    <div class="subtitle">Run All + 개별 Run 지원 · 내부 동작을 설명하는 화이트박스 테스트</div>
+  </div>
+  <div id="controls">
+    <span id="runner-status">Run All 또는 각 테스트의 Run 버튼으로 실행하세요.</span>
+    <button id="run-btn" class="action-btn">▶ Run All</button>
+  </div>
+</div>
+
+<div id="result-container"></div>
+
+<script type="module">
+  import {
+    renderUI,
+    runAll,
+  } from '/src/test/test-runner.js';
+
+  // 테스트 파일 import (사이드이펙트 — describe/it 등록)
+  import '/src/test/hook-tests.js';
+  import '/src/test/integration-tests.js';
+
+  const container = document.getElementById('result-container');
+  const runBtn    = document.getElementById('run-btn');
+  renderUI(container);
+
+  runBtn.addEventListener('click', async () => {
+    runBtn.textContent = '실행 중...';
+    await runAll();
+    runBtn.textContent = '▶ Run All';
+  });
+</script>
+
+</body>
+</html>

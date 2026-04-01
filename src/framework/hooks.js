@@ -114,3 +114,18 @@ function shallowEqual(a, b) {
   if (a.length !== b.length) return false;
   return a.every((v, i) => v === b[i]);
 }
+
+export function __resetHooksForTests() {
+  renderScheduled = false;
+  renderFn = null;
+  currentKey = '';
+  hookIndex = 0;
+  hookStore.clear();
+  pendingEffects.length = 0;
+  effectStore.clear();
+}
+
+// ── 테스트 전용 진단 (읽기 전용) ──
+export function __getHookStore() { return hookStore; }
+export function __getEffectStore() { return effectStore; }
+export function __getPendingEffects() { return pendingEffects; }

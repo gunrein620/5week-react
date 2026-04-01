@@ -319,6 +319,11 @@ export function patch(domRoot, patches) {
   return currentRoot;
 }
 
+export function __resetVdomForTests() {
+  EVENT_HANDLERS.clear();
+  nextVdomId = 1;
+}
+
 // ── deepCopy ──────────────────────────────────────────────────────────────────
 export function deepCopy(obj) {
   // handlers 함수는 JSON으로 복사 불가 → 별도 처리

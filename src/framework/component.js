@@ -65,3 +65,12 @@ export function mount(component, target) {
   setRenderFn(renderApp);
   renderApp();
 }
+
+export function __resetComponentForTests() {
+  rootDOM = null;
+  currentVTree = null;
+  rootComponent = null;
+  mountTarget = null;
+  componentStack.length = 0;
+  componentCallCount = {};
+}
