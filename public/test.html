@@ -1,114 +1,352 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ko">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Flicker — 테스트 페이지</title>
-  <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Flicker 테스트 시뮬레이터</title>
+    <link rel="stylesheet" href="/styles/main.css" />
+    <style>
+      .sim-page { min-height: 100vh; }
+      .sim-main { max-width: 1240px; display: flex; flex-direction: column; gap: 18px; }
 
-    body {
-      background: #0a0a0a;
-      color: #e2e8f0;
-      font-family: 'Segoe UI', system-ui, sans-serif;
-      min-height: 100vh;
-      padding: 24px;
-    }
+      .sim-hero {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 24px 26px;
+        border-radius: var(--radius-lg);
+        background: var(--surface-solid);
+        border: 1px solid var(--border);
+        box-shadow: var(--shadow-sm);
+      }
 
-    #app-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 24px;
-      padding-bottom: 16px;
-      border-bottom: 1px solid #262626;
-    }
+      .sim-hero__eyebrow {
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--accent);
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        margin-bottom: 8px;
+      }
 
-    #app-header h1 {
-      font-size: 22px;
-      font-weight: 700;
-      color: #f8fafc;
-    }
+      .sim-hero__title {
+        font-size: 30px;
+        font-weight: 700;
+        letter-spacing: -0.04em;
+      }
 
-    #app-header .subtitle {
-      font-size: 13px;
-      color: #71717a;
-      margin-top: 2px;
-    }
+      .sim-hero__copy {
+        margin-top: 10px;
+        color: var(--text-secondary);
+        font-size: 14px;
+        line-height: 1.7;
+      }
 
-    #controls {
-      display: flex;
-      align-items: center;
-      gap: 14px;
-    }
+      .sim-hero__meta {
+        font-size: 13px;
+        color: var(--text-secondary);
+        font-weight: 600;
+      }
 
-    button.action-btn {
-      background: #3b82f6;
-      color: #fff;
-      border: none;
-      border-radius: 6px;
-      padding: 8px 18px;
-      font-size: 14px;
-      font-weight: 600;
-      cursor: pointer;
-      transition: background 0.15s;
-    }
-    button.action-btn:hover { background: #2563eb; }
-    button.action-btn:disabled { background: #374151; cursor: default; }
+      .sim-tabs { display: flex; flex-wrap: wrap; gap: 10px; }
 
-    #runner-status {
-      font-size: 13px;
-      color: #94a3b8;
-      max-width: 320px;
-      line-height: 1.5;
-    }
+      .sim-tab {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 12px 16px;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        background: var(--surface-solid);
+        color: var(--text-primary);
+        box-shadow: var(--shadow-sm);
+        cursor: pointer;
+        transition: transform var(--transition), box-shadow var(--transition), border-color var(--transition);
+      }
 
-    #result-container {
-      max-width: 860px;
-    }
+      .sim-tab:hover { transform: translateY(-1px); }
 
-    /* 노드 패치 애니메이션 (앱에서 재사용) */
-    .node-patched {
-      outline: 2px solid #3b82f6;
-      transition: outline 0.6s ease-out;
-    }
-  </style>
-</head>
-<body>
+      .sim-tab--active {
+        border-color: rgba(0, 113, 227, 0.3);
+        box-shadow: 0 10px 22px rgba(0, 113, 227, 0.08);
+      }
 
-<div id="app-header">
-  <div>
-    <h1>⚡ Flicker Test Runner</h1>
-    <div class="subtitle">Run All + 개별 Run 지원 · 단위 테스트 19개 + 기능 테스트 12개</div>
-  </div>
-  <div id="controls">
-    <span id="runner-status">Run All 또는 각 테스트의 Run 버튼으로 실행하세요.</span>
-    <button id="run-btn" class="action-btn">▶ Run All</button>
-  </div>
-</div>
+      .sim-tab__title { font-size: 14px; font-weight: 700; }
 
-<div id="result-container"></div>
+      .sim-tab__badge {
+        display: inline-flex;
+        align-items: center;
+        padding: 5px 9px;
+        border-radius: 999px;
+        background: rgba(255, 159, 10, 0.14);
+        color: var(--yellow);
+        font-size: 11px;
+        font-weight: 700;
+      }
 
-<script type="module">
-  import {
-    renderUI,
-    runAll,
-  } from '/src/test/test-runner.js';
+      .sim-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
+        gap: 18px;
+      }
 
-  // 테스트 파일 import (사이드이펙트 — describe/it 등록)
-  import '/src/test/unit-tests.js';
-  import '/src/test/feature-tests.js';
+      .sim-panel {
+        border-radius: var(--radius-lg);
+        border: 1px solid var(--border);
+        background: var(--surface-solid);
+        box-shadow: var(--shadow-sm);
+        overflow: hidden;
+      }
 
-  const container = document.getElementById('result-container');
-  const runBtn    = document.getElementById('run-btn');
-  renderUI(container);
+      .sim-panel__head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        padding: 18px 20px;
+        border-bottom: 1px solid var(--border);
+      }
 
-  runBtn.addEventListener('click', async () => {
-    runBtn.textContent = '실행 중...';
-    await runAll();
-    runBtn.textContent = '▶ Run All';
-  });
-</script>
+      .sim-panel__label {
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--accent);
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        margin-bottom: 6px;
+      }
 
-</body>
+      .sim-panel__title {
+        font-size: 24px;
+        font-weight: 700;
+        letter-spacing: -0.03em;
+      }
+
+      .sim-panel__copy {
+        margin-top: 6px;
+        color: var(--text-secondary);
+        font-size: 14px;
+        line-height: 1.6;
+      }
+
+      .sim-panel__body { padding: 20px; }
+
+      .sim-stage {
+        min-height: 620px;
+        background:
+          radial-gradient(circle at top left, rgba(0, 113, 227, 0.08), transparent 42%),
+          linear-gradient(180deg, rgba(255,255,255,0.72), rgba(255,255,255,0.96));
+      }
+
+      .sim-stage__mount { min-height: 540px; }
+      .sim-stage-screen { display: flex; flex-direction: column; gap: 16px; }
+      .sim-scene { display: flex; flex-direction: column; gap: 14px; }
+      .sim-scene__hint { color: var(--text-secondary); font-size: 13px; line-height: 1.6; }
+      .sim-feed-tabs { width: fit-content; }
+      .sim-post-card { max-width: 420px; }
+      .sim-post-card__media { min-height: 220px; }
+
+      .sim-timer-card,
+      .sim-memo-card {
+        max-width: 430px;
+        padding: 24px;
+        border-radius: var(--radius-lg);
+        background: var(--surface-solid);
+        border: 1px solid var(--border);
+        box-shadow: var(--shadow-md);
+      }
+
+      .sim-timer-card__top {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 16px;
+      }
+
+      .sim-badge,
+      .sim-memo-card__badge {
+        display: inline-flex;
+        align-items: center;
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: rgba(0, 113, 227, 0.08);
+        color: var(--accent);
+        font-size: 12px;
+        font-weight: 700;
+        margin-bottom: 10px;
+      }
+
+      .sim-memo-card__badge {
+        background: rgba(255, 159, 10, 0.14);
+        color: var(--yellow);
+      }
+
+      .sim-timer-card__title,
+      .sim-memo-card__title {
+        font-size: 24px;
+        font-weight: 700;
+        letter-spacing: -0.03em;
+      }
+
+      .sim-timer-card__value { font-size: 34px; font-weight: 700; color: var(--text-primary); }
+      .sim-timer-card__bar { margin-top: 18px; height: 8px; }
+
+      .sim-timer-card__row {
+        margin-top: 14px;
+        display: flex;
+        justify-content: space-between;
+        gap: 14px;
+        color: var(--text-secondary);
+        font-size: 14px;
+      }
+
+      .sim-timer-card__row strong { color: var(--text-primary); font-weight: 700; }
+      .sim-timer-card__label { color: var(--text-secondary); }
+      .sim-memo-card__copy { margin-top: 12px; color: var(--text-secondary); font-size: 14px; line-height: 1.7; }
+      .sim-action-btn { margin-top: 18px; }
+
+      .sim-console { background: #0f1115; color: #f5f7fb; min-height: 620px; }
+      .sim-console .sim-panel__head { border-bottom-color: rgba(255, 255, 255, 0.08); }
+      .sim-console .sim-panel__label { color: #7fd6ff; }
+      .sim-console .sim-panel__title { color: #f5f7fb; }
+      .sim-console .sim-panel__copy { color: rgba(245, 247, 251, 0.72); }
+
+      .console-body {
+        height: 540px;
+        overflow: auto;
+        padding: 20px;
+        font-family: Consolas, Monaco, "Courier New", monospace;
+      }
+
+      .console-empty {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        justify-content: center;
+        gap: 10px;
+        min-height: 100%;
+        color: rgba(245, 247, 251, 0.78);
+      }
+
+      .console-empty__title { font-size: 14px; font-weight: 700; color: #7fd6ff; }
+      .console-empty__copy { font-size: 14px; line-height: 1.8; }
+
+      .console-entry {
+        position: relative;
+        padding: 14px 16px 14px 18px;
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+      }
+
+      .console-entry + .console-entry { margin-top: 12px; }
+
+      .console-entry--active {
+        border-color: rgba(127, 214, 255, 0.55);
+        box-shadow: 0 0 0 1px rgba(127, 214, 255, 0.22), 0 0 22px rgba(0, 113, 227, 0.15);
+        background: rgba(127, 214, 255, 0.08);
+      }
+
+      .console-entry__top {
+        display: grid;
+        grid-template-columns: 92px 1fr;
+        gap: 10px;
+        align-items: start;
+      }
+
+      .console-entry__label { color: #7fd6ff; font-weight: 700; }
+      .console-entry__title { color: #f5f7fb; line-height: 1.7; }
+      .console-entry__details { margin-top: 8px; padding-left: 102px; }
+
+      .console-entry__detail {
+        display: flex;
+        gap: 8px;
+        line-height: 1.7;
+        color: rgba(245, 247, 251, 0.82);
+      }
+
+      .console-entry__branch { color: rgba(127, 214, 255, 0.76); }
+      .sim-target--pulse { animation: simPulse 0.7s ease; }
+
+      @keyframes simPulse {
+        0% { box-shadow: 0 0 0 0 rgba(0, 113, 227, 0.36); transform: translateY(0); }
+        50% { box-shadow: 0 0 0 10px rgba(0, 113, 227, 0.08); transform: translateY(-2px); }
+        100% { box-shadow: 0 0 0 0 rgba(0, 113, 227, 0); transform: translateY(0); }
+      }
+
+      @media (max-width: 1040px) {
+        .sim-grid { grid-template-columns: 1fr; }
+      }
+
+      @media (max-width: 760px) {
+        .sim-hero { flex-direction: column; align-items: stretch; }
+        .sim-hero__title { font-size: 24px; }
+        .sim-hero__meta { display: none; }
+        .sim-panel__head { flex-direction: column; align-items: flex-start; }
+        .sim-panel__title { font-size: 21px; }
+        .console-entry__top { grid-template-columns: 1fr; }
+        .console-entry__details { padding-left: 0; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app sim-page">
+      <header class="header">
+        <div class="header__inner">
+          <a class="header__logo" href="/index.html">
+            <span class="header__logo-icon">⚡</span>
+            <span class="header__logo-text">Flicker 테스트 시뮬레이터</span>
+          </a>
+          <div class="header__actions">
+            <span id="header-meta" class="header__username">왼쪽에서 눌러 보세요</span>
+          </div>
+        </div>
+      </header>
+
+      <main class="main sim-main">
+        <section class="sim-hero">
+          <div>
+            <div class="sim-hero__eyebrow">White-box Simulation</div>
+            <h1 class="sim-hero__title">기능을 누르면 내부 동작이 오른쪽에서 순서대로 보입니다</h1>
+            <p class="sim-hero__copy">
+              왼쪽은 실제 Flicker 엔진으로 그린 테스트용 화면이고, 오른쪽은 어떤 함수와 상태 변화가 이어졌는지 한글 콘솔처럼 보여주는 시뮬레이션입니다.
+            </p>
+          </div>
+          <div class="sim-hero__meta">좋아요 · 타이머 · 정렬 캐시</div>
+        </section>
+
+        <nav id="scenario-tabs" class="sim-tabs" aria-label="scenario tabs"></nav>
+
+        <section class="sim-grid">
+          <article class="sim-panel sim-stage">
+            <header class="sim-panel__head">
+              <div>
+                <div class="sim-panel__label">테스트 화면</div>
+                <div id="scenario-title" class="sim-panel__title"></div>
+                <div id="scenario-subtitle" class="sim-panel__copy"></div>
+              </div>
+              <button id="scenario-reset" class="btn btn-ghost">초기화</button>
+            </header>
+            <div class="sim-panel__body">
+              <div id="scenario-root" class="sim-stage__mount"></div>
+            </div>
+          </article>
+
+          <article class="sim-panel sim-console">
+            <header class="sim-panel__head">
+              <div>
+                <div class="sim-panel__label">동작 로그</div>
+                <div class="sim-panel__title">한글 콘솔</div>
+                <div class="sim-panel__copy">왼쪽에서 버튼을 누르면 단계별 로그가 자동으로 재생됩니다.</div>
+              </div>
+            </header>
+            <div id="console-body" class="console-body"></div>
+          </article>
+        </section>
+      </main>
+    </div>
+
+    <script type="module" src="/src/test-page/test-runner.js"></script>
+  </body>
 </html>
