@@ -95,12 +95,18 @@ export function createElement(tagName, props = {}, ...children) {
 }
 
 // ── VNode → DOM ───────────────────────────────────────────────────────────────
-export function vnodeToDOM(vnode, doc = document) {
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const SVG_TAGS = new Set(['svg','path','circle','rect','line','polyline','polygon','ellipse','g','defs','use','symbol','text','tspan','clippath','mask','pattern','linearGradient','radialGradient','stop']);
+
+export function vnodeToDOM(vnode, doc = document, ns = null) {
   if (vnode.type === 'text') {
     return doc.createTextNode(vnode.text);
   }
 
-  const el = doc.createElement(vnode.tagName);
+  const isSvg = ns === SVG_NS || SVG_TAGS.has(vnode.tagName);
+  const el = isSvg
+    ? doc.createElementNS(SVG_NS, vnode.tagName)
+    : doc.createElement(vnode.tagName);
 
   // 이벤트 핸들러 등록
   if (vnode.handlers && Object.keys(vnode.handlers).length > 0) {
@@ -117,8 +123,9 @@ export function vnodeToDOM(vnode, doc = document) {
   }
 
   if (!VOID_TAGS.has(vnode.tagName)) {
+    const childNs = isSvg ? SVG_NS : null;
     for (const child of (vnode.children || [])) {
-      el.appendChild(vnodeToDOM(child, doc));
+      el.appendChild(vnodeToDOM(child, doc, childNs));
     }
   }
 
