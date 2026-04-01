@@ -1,7 +1,9 @@
 // ── App.js ────────────────────────────────────────────────────────────────────
+// 루트 컴포넌트: 모든 상태(State)와 사이드이펙트(Effect)를 여기서만 관리합니다.
+// 자식 컴포넌트(Login, Feed, CreatePost, PostCard)는 props만 받는 순수 함수입니다.
+
 import { createElement } from '../framework/vdom.js';
-import { useEffect, useState } from '../framework/hooks.js';
-import { beginComponent, endComponent } from '../framework/component.js';
+import { useState, useEffect } from '../framework/hooks.js';
 import { getRoute, navigate } from '../framework/router.js';
 import { Login } from './Login.js';
 import { Feed } from './Feed.js';
@@ -10,8 +12,28 @@ import { Header } from './Header.js';
 import { api } from '../services/api.js';
 
 export function App() {
-  beginComponent('AppShell');
+  // ── 인증 상태 ─────────────────────────────────────────────────────────────
   const [authReady, setAuthReady] = useState(false);
+
+  // ── 로그인 상태 ───────────────────────────────────────────────────────────
+  const [loginUsername, setLoginUsername] = useState('');
+  const [loginError, setLoginError] = useState('');
+  const [loginLoading, setLoginLoading] = useState(false);
+
+  // ── 피드 상태 ─────────────────────────────────────────────────────────────
+  const [livePosts, setLivePosts] = useState([]);
+  const [myPosts, setMyPosts] = useState([]);
+  const [activeTab, setActiveTab] = useState('live');
+  const [postTtls, setPostTtls] = useState({});
+  const [likingPosts, setLikingPosts] = useState({});
+
+  // ── 글 작성 상태 ──────────────────────────────────────────────────────────
+  const [createText, setCreateText] = useState('');
+  const [createImageData, setCreateImageData] = useState(null);
+  const [createPreview, setCreatePreview] = useState(null);
+  const [createLoading, setCreateLoading] = useState(false);
+  const [createError, setCreateError] = useState('');
+
   const route = getRoute();
   const username = localStorage.getItem('username');
   const isLoggedIn = Boolean(username);
@@ -19,39 +41,75 @@ export function App() {
     ? (route === '#/login' ? '#/feed' : route)
     : '#/login';
 
+  // ── 인증 확인 effect ───────────────────────────────────────────────────────
   useEffect(() => {
     let cancelled = false;
-
     if (!username) {
       setAuthReady(true);
-      return () => {
-        cancelled = true;
-      };
+      return () => { cancelled = true; };
     }
-
     api.post('/api/auth/login', { username })
       .catch(() => null)
-      .finally(() => {
-        if (!cancelled) setAuthReady(true);
-      });
-
-    return () => {
-      cancelled = true;
-    };
+      .finally(() => { if (!cancelled) setAuthReady(true); });
+    return () => { cancelled = true; };
   }, [username]);
 
-  // 렌더 중 즉시 navigate하면 현재 diff/patch 흐름과 충돌할 수 있어
-  // 비로그인 사용자는 항상 로그인 화면 트리를 먼저 안정적으로 렌더한다.
+  // ── 피드 초기 로드 effect ─────────────────────────────────────────────────
+  useEffect(() => {
+    api.get(`/api/posts?username=${encodeURIComponent(username || '')}`)
+      .then(syncPosts);
+  }, [username]);
+
+  // ── 피드 3초 폴링 effect ──────────────────────────────────────────────────
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (window.__dtPauseTimers) return;
+      api.get(`/api/posts?username=${encodeURIComponent(username || '')}`)
+        .then(syncPosts);
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [username]);
+
+  // ── TTL 1초 카운트다운 effect ─────────────────────────────────────────────
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (window.__dtPauseTimers) return;
+      setPostTtls(prev => {
+        const next = {};
+        for (const [id, ttl] of Object.entries(prev)) {
+          next[id] = ttl - 1;
+        }
+        return next;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // ── 서버 데이터 동기화 ─────────────────────────────────────────────────────
+  function syncPosts(data) {
+    const live = Array.isArray(data.livePosts) ? data.livePosts : (data.posts || []);
+    const mine = Array.isArray(data.myPosts) ? data.myPosts : [];
+    setLivePosts(live);
+    setMyPosts(mine);
+    // 서버에서 받은 TTL로 로컬 TTL 갱신
+    setPostTtls(prev => {
+      const next = { ...prev };
+      for (const post of [...live, ...mine]) {
+        next[post.id] = post.ttl;
+      }
+      return next;
+    });
+  }
+
+  // ── 라우팅 보정 ────────────────────────────────────────────────────────────
   if (!isLoggedIn && route !== '#/login') {
     queueMicrotask(() => navigate('#/login'));
   }
-
   if (isLoggedIn && route === '#/login') {
     queueMicrotask(() => navigate('#/feed'));
   }
 
   if (isLoggedIn && !authReady) {
-    endComponent();
     return createElement('div', { class: 'app' },
       Header(),
       createElement('main', { class: 'main' },
@@ -63,22 +121,137 @@ export function App() {
     );
   }
 
+  // ── 로그인 핸들러 ──────────────────────────────────────────────────────────
+  const handleLoginInput = (e) => setLoginUsername(e.target.value);
+
+  const handleLoginSubmit = async (e) => {
+    e.preventDefault();
+    const name = loginUsername.trim();
+    if (!name) { setLoginError('닉네임을 입력해주세요.'); return; }
+    setLoginLoading(true);
+    setLoginError('');
+    try {
+      const data = await api.post('/api/auth/login', { username: name });
+      if (data.ok) {
+        localStorage.setItem('username', data.username);
+        navigate('#/feed');
+      } else {
+        setLoginError(data.message || '오류가 발생했습니다.');
+      }
+    } catch {
+      setLoginError('서버에 연결할 수 없습니다.');
+    } finally {
+      setLoginLoading(false);
+    }
+  };
+
+  // ── 피드 핸들러 ────────────────────────────────────────────────────────────
+  const handleTabChange = (tab) => setActiveTab(tab);
+
+  const handleLike = async (postId) => {
+    if (likingPosts[postId]) return;
+    setLikingPosts(prev => ({ ...prev, [postId]: true }));
+    try {
+      const data = await api.post(`/api/posts/${postId}/like`, { username });
+      if (data.ok) syncPosts(data);
+    } finally {
+      setLikingPosts(prev => ({ ...prev, [postId]: false }));
+    }
+  };
+
+  // ── 글 작성 핸들러 ─────────────────────────────────────────────────────────
+  const handleCreateTextInput = (e) => setCreateText(e.target.value);
+
+  const handleCreateImageChange = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (file.type && !file.type.startsWith('image/')) {
+      setCreateError('이미지 파일만 올릴 수 있어요.');
+      return;
+    }
+    setCreateError('');
+    readFileAsDataURL(file)
+      .then(data => { setCreateImageData(data); setCreatePreview(data); })
+      .catch(() => setCreateError('사진을 처리하지 못했어요. 다른 이미지를 선택해보세요.'));
+  };
+
+  const handleCreateSubmit = async (e) => {
+    e.preventDefault();
+    if (!createText.trim() && !createImageData) {
+      setCreateError('텍스트나 이미지를 추가해주세요.');
+      return;
+    }
+    setCreateLoading(true);
+    setCreateError('');
+    try {
+      const data = await api.post('/api/posts', {
+        username, text: createText.trim(), imageData: createImageData,
+      });
+      if (data.ok) navigate('#/feed');
+      else setCreateError(data.message || '오류가 발생했습니다.');
+    } catch {
+      setCreateError('서버에 연결할 수 없습니다.');
+    } finally {
+      setCreateLoading(false);
+    }
+  };
+
+  const handleCreateRemoveImage = (e) => {
+    e.preventDefault();
+    setCreateImageData(null);
+    setCreatePreview(null);
+    setCreateError('');
+  };
+
+  // ── 페이지 렌더 ────────────────────────────────────────────────────────────
   let page;
   switch (effectiveRoute) {
     case '#/login':
-      page = Login();
+      page = Login({
+        username: loginUsername,
+        error: loginError,
+        loading: loginLoading,
+        onInput: handleLoginInput,
+        onSubmit: handleLoginSubmit,
+      });
       break;
     case '#/create':
-      page = CreatePost();
+      page = CreatePost({
+        text: createText,
+        imageData: createImageData,
+        preview: createPreview,
+        loading: createLoading,
+        error: createError,
+        onTextInput: handleCreateTextInput,
+        onImageChange: handleCreateImageChange,
+        onSubmit: handleCreateSubmit,
+        onRemoveImage: handleCreateRemoveImage,
+      });
       break;
     default:
-      page = Feed();
+      page = Feed({
+        livePosts,
+        myPosts,
+        activeTab,
+        postTtls,
+        likingPosts,
+        username: username || '',
+        onTabChange: handleTabChange,
+        onLike: handleLike,
+      });
   }
-
-  endComponent();
 
   return createElement('div', { class: 'app' },
     Header(),
     createElement('main', { class: 'main' }, page)
   );
+}
+
+function readFileAsDataURL(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => resolve(e.target.result);
+    reader.onerror = () => reject(new Error('파일을 읽을 수 없습니다.'));
+    reader.readAsDataURL(file);
+  });
 }

@@ -3,11 +3,89 @@
 
 import { describe, it, assert, log, createSandbox } from './test-runner.js';
 import { createElement, vnodeToDOM } from '../framework/vdom.js';
-import { useState } from '../framework/hooks.js';
+import { useState, useEffect } from '../framework/hooks.js';
 import { mount } from '../framework/component.js';
 import { Login } from '../components/Login.js';
 import { Feed } from '../components/Feed.js';
 import { CreatePost } from '../components/CreatePost.js';
+import { api } from '../services/api.js';
+import { navigate } from '../framework/router.js';
+
+// ── 테스트용 stateful 래퍼 ─────────────────────────────────────────────────────
+// Login/Feed/CreatePost는 이제 stateless 순수 함수이므로,
+// 단독 mount 테스트 시 상태를 주입하는 얇은 래퍼를 통해 검증합니다.
+
+function LoginWithState() {
+  const [username, setUsername] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    const name = username.trim();
+    if (!name) { setError('닉네임을 입력해주세요.'); return; }
+    setLoading(true);
+    setError('');
+    try {
+      const data = await api.post('/api/auth/login', { username: name });
+      if (data.ok) { localStorage.setItem('username', data.username); navigate('#/feed'); }
+      else setError(data.message || '오류가 발생했습니다.');
+    } catch { setError('서버에 연결할 수 없습니다.'); }
+    finally { setLoading(false); }
+  };
+
+  return Login({ username, error, loading,
+    onInput: (e) => setUsername(e.target.value),
+    onSubmit: handleSubmit,
+  });
+}
+
+function FeedWithState() {
+  const username = localStorage.getItem('username') || '';
+  const [livePosts, setLivePosts] = useState([]);
+  const [myPosts, setMyPosts] = useState([]);
+  const [activeTab, setActiveTab] = useState('live');
+
+  useEffect(() => {
+    api.get(`/api/posts?username=${encodeURIComponent(username)}`).then(data => {
+      setLivePosts(Array.isArray(data.livePosts) ? data.livePosts : []);
+      setMyPosts(Array.isArray(data.myPosts) ? data.myPosts : []);
+    });
+  }, [username]);
+
+  return Feed({ livePosts, myPosts, activeTab, username,
+    onTabChange: (tab) => setActiveTab(tab),
+  });
+}
+
+function CreatePostWithState() {
+  const [text, setText] = useState('');
+  const [imageData, setImageData] = useState(null);
+  const [preview, setPreview] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!text.trim() && !imageData) { setError('텍스트나 이미지를 추가해주세요.'); return; }
+    setLoading(true);
+    setError('');
+    try {
+      const data = await api.post('/api/posts', {
+        username: localStorage.getItem('username'), text: text.trim(), imageData,
+      });
+      if (data.ok) navigate('#/feed');
+      else setError(data.message || '오류가 발생했습니다.');
+    } catch { setError('서버에 연결할 수 없습니다.'); }
+    finally { setLoading(false); }
+  };
+
+  return CreatePost({ text, imageData, preview, loading, error,
+    onTextInput: (e) => setText(e.target.value),
+    onRemoveImage: (e) => { e.preventDefault(); setImageData(null); setPreview(null); setError(''); },
+    onSubmit: handleSubmit,
+  });
+}
 
 // ── 타이밍 헬퍼 ───────────────────────────────────────────────────────────────
 const waitMicrotask = () => new Promise(r => queueMicrotask(r));
@@ -94,7 +172,7 @@ describe('로그인 화면', {
     checkpoints: ['빈 value', 'submit 이벤트', '에러 메시지 DOM 확인'],
   }, async () => {
     const sandbox = createSandbox('login-empty');
-    mount(Login, sandbox);
+    mount(LoginWithState, sandbox);
     await waitFrame(); // 초기 이펙트 플러시
 
     const form = sandbox.querySelector('form');
@@ -119,7 +197,7 @@ describe('로그인 화면', {
 
     try {
       const sandbox = createSandbox('login-success');
-      mount(Login, sandbox);
+      mount(LoginWithState, sandbox);
       await waitFrame();
 
       // 닉네임 입력 시뮬레이션
@@ -150,7 +228,7 @@ describe('로그인 화면', {
 
     try {
       const sandbox = createSandbox('login-error');
-      mount(Login, sandbox);
+      mount(LoginWithState, sandbox);
       await waitFrame();
 
       const input = sandbox.querySelector('input[type="text"]');
@@ -191,7 +269,7 @@ describe('피드 화면', {
 
     try {
       const sandbox = createSandbox('feed-posts');
-      mount(Feed, sandbox);
+      mount(FeedWithState, sandbox);
       await waitFrame();
       await waitMs(50); // async fetch 완료 대기 + 리렌더
 
@@ -212,7 +290,7 @@ describe('피드 화면', {
 
     try {
       const sandbox = createSandbox('feed-empty');
-      mount(Feed, sandbox);
+      mount(FeedWithState, sandbox);
       await waitFrame();
       await waitMs(50);
 
@@ -236,7 +314,7 @@ describe('피드 화면', {
 
     try {
       const sandbox = createSandbox('feed-tabs');
-      mount(Feed, sandbox);
+      mount(FeedWithState, sandbox);
       await waitFrame();
       await waitMs(50);
 
@@ -272,7 +350,7 @@ describe('글 작성', {
 
     try {
       const sandbox = createSandbox('create-input');
-      mount(CreatePost, sandbox);
+      mount(CreatePostWithState, sandbox);
 
       const textarea = sandbox.querySelector('textarea');
       textarea.value = 'hello world';
@@ -297,7 +375,7 @@ describe('글 작성', {
 
     try {
       const sandbox = createSandbox('create-empty');
-      mount(CreatePost, sandbox);
+      mount(CreatePostWithState, sandbox);
 
       const form = sandbox.querySelector('form');
       form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
@@ -325,7 +403,7 @@ describe('글 작성', {
 
     try {
       const sandbox = createSandbox('create-success');
-      mount(CreatePost, sandbox);
+      mount(CreatePostWithState, sandbox);
 
       const textarea = sandbox.querySelector('textarea');
       textarea.value = 'great moment!';
