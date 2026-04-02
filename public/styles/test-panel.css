@@ -1,0 +1,224 @@
+/* ── test-panel.css ────────────────────────────────────────────────────────── */
+/* 우측 슬라이드인 터미널 패널 스타일 */
+
+#test-panel-toggle {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: #1e1b4b;
+  border: 1px solid #4338ca;
+  color: #fff;
+  font-size: 22px;
+  cursor: pointer;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 20px rgba(67, 56, 202, 0.45);
+  transition: transform 0.2s, box-shadow 0.2s;
+  padding: 0;
+  line-height: 1;
+}
+
+#test-panel-toggle:hover {
+  transform: scale(1.12);
+  box-shadow: 0 6px 28px rgba(67, 56, 202, 0.65);
+}
+
+/* ── 패널 본체 ──────────────────────────────────────────────────────────────── */
+#test-panel {
+  position: fixed;
+  top: 0;
+  right: -384px;
+  width: 360px;
+  height: 100vh;
+  background: #09090f;
+  border-left: 1px solid #1e1b4b;
+  z-index: 9998;
+  display: flex;
+  flex-direction: column;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  transition: right 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+  overflow: hidden;
+  box-shadow: -8px 0 40px rgba(0, 0, 0, 0.6);
+}
+
+#test-panel.open {
+  right: 0;
+}
+
+/* ── 헤더 ───────────────────────────────────────────────────────────────────── */
+.tp-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid #1f2937;
+  flex-shrink: 0;
+  background: #0d0d16;
+}
+
+.tp-title {
+  color: #c7d2fe;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.tp-controls {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.tp-btn {
+  background: #1e3a5f;
+  color: #93c5fd;
+  border: none;
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s;
+}
+
+.tp-btn:hover:not(:disabled) { background: #1e40af; color: #bfdbfe; }
+.tp-btn:disabled { background: #1f2937; color: #374151; cursor: default; }
+
+.tp-btn-close {
+  background: transparent;
+  color: #4b5563;
+  border: none;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: inherit;
+  transition: color 0.15s;
+}
+
+.tp-btn-close:hover { color: #9ca3af; }
+
+/* ── 바디 (스크롤 영역) ─────────────────────────────────────────────────────── */
+.tp-body {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 4px 0;
+  scrollbar-width: thin;
+  scrollbar-color: #1f2937 transparent;
+}
+
+.tp-body::-webkit-scrollbar { width: 4px; }
+.tp-body::-webkit-scrollbar-track { background: transparent; }
+.tp-body::-webkit-scrollbar-thumb { background: #1f2937; border-radius: 2px; }
+
+/* ── 스위트 ─────────────────────────────────────────────────────────────────── */
+.tp-suite {
+  border-bottom: 1px solid #0f172a;
+}
+
+.tp-suite-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.1s;
+}
+
+.tp-suite-header:hover { background: #0f172a; }
+
+.tp-suite-icon { font-size: 10px; width: 12px; flex-shrink: 0; }
+.tp-suite-name { color: #cbd5e1; font-size: 11px; font-weight: 700; flex: 1; }
+.tp-suite-badge { font-size: 10px; color: #374151; flex-shrink: 0; }
+.tp-suite-toggle { font-size: 9px; color: #374151; flex-shrink: 0; }
+
+/* ── 테스트 항목 ─────────────────────────────────────────────────────────────── */
+.tp-tests { padding-bottom: 2px; }
+
+.tp-test {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 3px 14px 3px 26px;
+  font-size: 11px;
+  cursor: default;
+  line-height: 1.5;
+}
+
+.tp-test-icon { flex-shrink: 0; width: 12px; font-style: normal; }
+.tp-test-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tp-test-ms   { flex-shrink: 0; font-size: 10px; }
+
+/* 상태별 색상 */
+.tp-test.pass  .tp-test-icon { color: #22c55e; }
+.tp-test.pass  .tp-test-name { color: #86efac; }
+.tp-test.pass  .tp-test-ms   { color: #166534; }
+
+.tp-test.fail  .tp-test-icon { color: #f87171; }
+.tp-test.fail  .tp-test-name { color: #fca5a5; }
+
+.tp-test.skip  .tp-test-icon { color: #52525b; }
+.tp-test.skip  .tp-test-name { color: #52525b; font-style: italic; }
+
+.tp-test.running .tp-test-icon { color: #60a5fa; }
+.tp-test.running .tp-test-name { color: #93c5fd; }
+
+.tp-test.pending .tp-test-icon { color: #374151; }
+.tp-test.pending .tp-test-name { color: #374151; }
+
+/* 에러 인라인 블록 */
+.tp-test-error {
+  margin: 1px 14px 4px 38px;
+  padding: 4px 8px;
+  background: #190a0a;
+  border-left: 2px solid #7f1d1d;
+  color: #fca5a5;
+  font-size: 10px;
+  white-space: pre-wrap;
+  border-radius: 0 3px 3px 0;
+  line-height: 1.5;
+}
+
+/* ── 푸터 (통계) ─────────────────────────────────────────────────────────────── */
+.tp-footer {
+  border-top: 1px solid #111827;
+  padding: 8px 14px;
+  flex-shrink: 0;
+  background: #0d0d16;
+}
+
+.tp-stats {
+  display: flex;
+  gap: 10px;
+  font-size: 11px;
+  font-weight: 700;
+  margin-bottom: 3px;
+  flex-wrap: wrap;
+}
+
+.tp-stats .s-pass   { color: #22c55e; }
+.tp-stats .s-fail   { color: #f87171; }
+.tp-stats .s-skip   { color: #52525b; }
+.tp-stats .s-total  { color: #374151; }
+
+.tp-duration {
+  font-size: 10px;
+  color: #1f2937;
+}
+
+.tp-status-line {
+  font-size: 10px;
+  color: #334155;
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

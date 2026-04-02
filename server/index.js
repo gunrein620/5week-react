@@ -2,24 +2,49 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
+const { seedData, makeProfileImage } = require('./seed');
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '5mb' }));
 
 // ── 인메모리 저장소 ──────────────────────────────────────
-const users = new Set();      // 닉네임 Set
-const posts = new Map();      // id → post 객체
+const users = new Set();          // 닉네임 Set
+const livePosts = new Map();      // id → 공개 피드용 post 객체
+const archivedPosts = new Map();  // username → Map<id, postSnapshot>
+const userProfiles = new Map();   // username → { profileImage }
+
+let serverTimersPaused = false;   // 테스트용 타이머 일시정지 플래그
+
+function getUserArchive(username) {
+  if (!archivedPosts.has(username)) {
+    archivedPosts.set(username, new Map());
+  }
+  return archivedPosts.get(username);
+}
 
 // ── 서버 TTL 관리 (1초마다 감소) ─────────────────────────
 setInterval(() => {
+  if (serverTimersPaused) return; // 테스트 중 일시정지
   const now = Date.now();
-  for (const [id, post] of posts.entries()) {
+  for (const [id, post] of livePosts.entries()) {
     const elapsed = (now - post.lastSync) / 1000;
     post.ttl -= elapsed;
     post.lastSync = now;
+    const archive = getUserArchive(post.author);
+    const archived = archive.get(id);
+    if (archived) {
+      archived.ttl = Math.max(0, post.ttl);
+      archived.isExpired = false;
+      archived.expiredAt = null;
+    }
     if (post.ttl <= 0) {
-      posts.delete(id);
+      livePosts.delete(id);
+      if (archived) {
+        archived.ttl = 0;
+        archived.isExpired = true;
+        archived.expiredAt = now;
+      }
     }
   }
 }, 1000);
@@ -29,21 +54,43 @@ function serializePost(post) {
   return {
     id: post.id,
     author: post.author,
+    authorProfileImage: userProfiles.get(post.author)?.profileImage || null,
     text: post.text,
     imageData: post.imageData,
     likes: post.likes,
     likedBy: Array.from(post.likedBy),
     ttl: Math.max(0, post.ttl),
     createdAt: post.createdAt,
+    isExpired: Boolean(post.isExpired),
+    expiredAt: post.expiredAt || null,
   };
 }
 
-function getFeed() {
-  return Array.from(posts.values())
+function getLiveFeed() {
+  return Array.from(livePosts.values())
     .filter(p => p.ttl > 0)
     .sort((a, b) => b.createdAt - a.createdAt)
     .map(serializePost);
 }
+
+function getMyPosts(username) {
+  if (!username || !users.has(username)) {
+    return [];
+  }
+
+  return Array.from(getUserArchive(username).values())
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .map(serializePost);
+}
+
+function getFeedPayload(username) {
+  return {
+    livePosts: getLiveFeed(),
+    myPosts: getMyPosts(username),
+  };
+}
+
+seedData(users, livePosts, archivedPosts, userProfiles);
 
 // ── Auth ──────────────────────────────────────────────────
 app.post('/api/auth/login', (req, res) => {
@@ -53,18 +100,74 @@ app.post('/api/auth/login', (req, res) => {
   }
   const name = username.trim();
   users.add(name);
+  if (!userProfiles.has(name)) {
+    userProfiles.set(name, { profileImage: makeProfileImage(name) });
+  }
   res.json({ ok: true, username: name });
+});
+
+// ── 테스트용 타이머 제어 ──────────────────────────────────
+app.post('/api/__test/pause-timers', (req, res) => {
+  serverTimersPaused = true;
+  res.json({ ok: true, paused: true });
+});
+
+app.post('/api/__test/resume-timers', (req, res) => {
+  // 정지 기간의 경과시간 무시를 위해 lastSync 갱신
+  const now = Date.now();
+  for (const post of livePosts.values()) {
+    post.lastSync = now;
+  }
+  serverTimersPaused = false;
+  res.json({ ok: true, paused: false });
+});
+
+// TTL 연장 (트레이스 표시 시간 확보용)
+app.post('/api/__test/extend-ttl', (req, res) => {
+  const { postId, extraSeconds } = req.body;
+  if (postId) {
+    const post = livePosts.get(postId);
+    if (post) {
+      post.ttl = Math.max(post.ttl, 0) + (extraSeconds || 5);
+      const archived = getUserArchive(post.author).get(postId);
+      if (archived) archived.ttl = post.ttl;
+      return res.json({ ok: true, newTtl: post.ttl });
+    }
+    return res.status(404).json({ ok: false, message: '포스트를 찾을 수 없습니다.' });
+  }
+  // postId 없으면 모든 live 포스트 연장
+  const extra = extraSeconds || 5;
+  for (const post of livePosts.values()) {
+    post.ttl = Math.max(post.ttl, 0) + extra;
+    const archived = getUserArchive(post.author).get(post.id);
+    if (archived) archived.ttl = post.ttl;
+  }
+  res.json({ ok: true, extended: livePosts.size });
 });
 
 // ── Posts ─────────────────────────────────────────────────
 app.get('/api/posts', (req, res) => {
-  res.json({ posts: getFeed() });
+  const username = typeof req.query.username === 'string' ? req.query.username.trim() : '';
+  res.json(getFeedPayload(username));
+});
+
+app.get('/api/user-profiles', (req, res) => {
+  res.json({
+    ok: true,
+    users: Array.from(userProfiles.entries()).map(([username, profile]) => ({
+      username,
+      profileImage: profile.profileImage,
+    })),
+  });
 });
 
 app.post('/api/posts', (req, res) => {
   const { username, text, imageData } = req.body;
   if (!username || !users.has(username)) {
     return res.status(401).json({ ok: false, message: '로그인이 필요합니다.' });
+  }
+  if (!userProfiles.has(username)) {
+    userProfiles.set(username, { profileImage: makeProfileImage(username) });
   }
   if (!text && !imageData) {
     return res.status(400).json({ ok: false, message: '내용을 입력해주세요.' });
@@ -79,14 +182,20 @@ app.post('/api/posts', (req, res) => {
     ttl: 10,
     lastSync: Date.now(),
     createdAt: Date.now(),
+    isExpired: false,
+    expiredAt: null,
   };
-  posts.set(post.id, post);
-  res.json({ ok: true, posts: getFeed() });
+  livePosts.set(post.id, post);
+  getUserArchive(username).set(post.id, {
+    ...post,
+    likedBy: new Set(post.likedBy),
+  });
+  res.json({ ok: true, ...getFeedPayload(username) });
 });
 
 app.post('/api/posts/:id/like', (req, res) => {
   const { username } = req.body;
-  const post = posts.get(req.params.id);
+  const post = livePosts.get(req.params.id);
 
   if (!post) return res.status(404).json({ ok: false, message: '포스트를 찾을 수 없습니다.' });
   if (!username || !users.has(username)) {
@@ -99,8 +208,14 @@ app.post('/api/posts/:id/like', (req, res) => {
   post.likedBy.add(username);
   post.likes += 1;
   post.ttl += 3;
+  const archived = getUserArchive(post.author).get(post.id);
+  if (archived) {
+    archived.likedBy = new Set(post.likedBy);
+    archived.likes = post.likes;
+    archived.ttl = post.ttl;
+  }
 
-  res.json({ ok: true, posts: getFeed() });
+  res.json({ ok: true, ...getFeedPayload(username) });
 });
 
 // ── Static 파일 서빙 ───────────────────────────────────────

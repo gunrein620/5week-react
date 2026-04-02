@@ -1,51 +1,35 @@
 // ── Feed.js ───────────────────────────────────────────────────────────────────
+// 순수 함수 컴포넌트: 상태 없음, 부모(App)로부터 props만 받아 렌더링합니다.
+
 import { createElement } from '../framework/vdom.js';
-import { useState, useEffect } from '../framework/hooks.js';
-import { beginComponent, endComponent } from '../framework/component.js';
 import { PostCard } from './PostCard.js';
-import { api } from '../services/api.js';
 
-export function Feed() {
-  beginComponent('Feed');
-  const [posts, setPosts] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState('live');
-  const username = localStorage.getItem('username') || '';
+export function Feed({
+  livePosts = [],
+  myPosts = [],
+  popularPosts = [],
+  activeTab = 'live',
+  postTtls = {},
+  likingPosts = {},
+  username = '',
+  onTabChange,
+  onLike,
+} = {}) {
+  const isMineTab = activeTab === 'mine';
+  const isPopularTab = activeTab === 'popular';
 
-  // 피드 진입 시 초기 로드 — useEffect: deps=[] → 마운트 1회
-  useEffect(() => {
-    api.get('/api/posts').then(data => {
-      setPosts(data.posts);
-      setLoading(false);
-    });
-  }, []);
+  const visiblePosts = isMineTab ? myPosts : isPopularTab ? popularPosts : livePosts;
 
-  // 3초마다 서버에서 피드를 다시 불러옴 (만료된 포스트 정리 + 좋아요 동기화)
-  // useEffect + setInterval: cleanup으로 타이머 정리
-  useEffect(() => {
-    const timer = setInterval(() => {
-      api.get('/api/posts').then(data => {
-        setPosts(data.posts); // 서버 TTL로 갱신 → diff → patch (만료된 포스트 REMOVE)
-      });
-    }, 3000);
-    return () => clearInterval(timer);
-  }, []);
-
-  endComponent();
-
-  const handleUpdate = (newPosts) => {
-    setPosts(newPosts);
-  };
-
-  const myPosts = posts.filter(post => post.author === username);
-  const visiblePosts = activeTab === 'mine' ? myPosts : posts;
-
-  if (loading) {
-    return createElement('div', { class: 'feed-loading' },
-      createElement('div', { class: 'spinner' }),
-      createElement('p', {}, '불러오는 중...')
-    );
-  }
+  const emptyTitle = isMineTab
+    ? '아직 내가 올린 글이 없어요'
+    : isPopularTab
+    ? '아직 좋아요를 받은 글이 없어요'
+    : '올라온 소식이 없어요';
+  const emptySub = isMineTab
+    ? '새 순간을 공유하면 여기서 따로 모아볼 수 있어요'
+    : isPopularTab
+    ? '게시물에 좋아요를 눌러 순위를 만들어보세요'
+    : '가장 먼저 순간을 남겨보세요';
 
   return createElement('section', { class: 'feed-page' },
     createElement('div', { class: 'feed-tabs', role: 'tablist', 'aria-label': '피드 보기 전환' },
@@ -54,36 +38,52 @@ export function Feed() {
         type: 'button',
         role: 'tab',
         'aria-selected': activeTab === 'live' ? 'true' : 'false',
-        onClick: () => setActiveTab('live'),
-      }, `실시간 올라오는 글 ${posts.length}`),
+        onClick: () => onTabChange && onTabChange('live'),
+      }, '실시간', createElement('span', { class: 'tab-badge' }, String(livePosts.length))),
+      createElement('button', {
+        class: `feed-tabs__button${activeTab === 'popular' ? ' feed-tabs__button--active' : ''}`,
+        type: 'button',
+        role: 'tab',
+        'aria-selected': activeTab === 'popular' ? 'true' : 'false',
+        onClick: () => onTabChange && onTabChange('popular'),
+      }, '인기순', createElement('span', { class: 'tab-badge' }, String(popularPosts.length))),
       createElement('button', {
         class: `feed-tabs__button${activeTab === 'mine' ? ' feed-tabs__button--active' : ''}`,
         type: 'button',
         role: 'tab',
         'aria-selected': activeTab === 'mine' ? 'true' : 'false',
-        onClick: () => setActiveTab('mine'),
-      }, `내가 올린 글 ${myPosts.length}`)
+        onClick: () => onTabChange && onTabChange('mine'),
+      }, '내 게시물', createElement('span', { class: 'tab-badge' }, String(myPosts.length)))
     ),
-    visiblePosts.length === 0
-      ? createElement('div', { class: 'feed-empty' },
-          createElement('div', { class: 'feed-empty__icon' }, activeTab === 'mine' ? '🫥' : '🔥'),
-          createElement(
-            'p',
-            { class: 'feed-empty__title' },
-            activeTab === 'mine' ? '아직 내가 올린 글이 없어요' : '아직 아무것도 없어요'
-          ),
-          createElement(
-            'p',
-            { class: 'feed-empty__sub' },
-            activeTab === 'mine'
-              ? '새 순간을 공유하면 여기서 따로 모아볼 수 있어요'
-              : '첫 번째 순간을 공유해보세요'
+    createElement('div', {
+      class: isMineTab ? 'feed-panel feed-panel--mine' : 'feed-panel feed-panel--live',
+      'data-key': isMineTab ? 'mine-panel' : isPopularTab ? 'popular-panel' : 'live-panel',
+    },
+      visiblePosts.length === 0
+        ? createElement('div', {
+            class: 'feed-empty',
+            'data-key': isMineTab ? 'mine-empty' : isPopularTab ? 'popular-empty' : 'live-empty',
+          },
+            createElement('div', { class: 'feed-empty__icon' }),
+            createElement('p', { class: 'feed-empty__title' }, emptyTitle),
+            createElement('p', { class: 'feed-empty__sub' }, emptySub)
+          )
+        : createElement('div', {
+            class: 'feed-grid',
+            'data-key': isMineTab ? 'mine-grid' : isPopularTab ? 'popular-grid' : 'live-grid',
+          },
+          ...visiblePosts.map((post, i) =>
+            PostCard({
+              post,
+              ttl: postTtls[post.id] ?? post.ttl,
+              liking: Boolean(likingPosts[post.id]),
+              hasLiked: post.likedBy ? post.likedBy.includes(username) : false,
+              isArchiveView: isMineTab,
+              rank: isPopularTab ? i + 1 : null,
+              onLike,
+            })
           )
         )
-      : createElement('div', { class: 'feed-grid' },
-          ...visiblePosts.map(post =>
-            PostCard({ post, onUpdate: handleUpdate })
-          )
-        )
+    )
   );
 }

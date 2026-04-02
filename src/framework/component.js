@@ -1,67 +1,95 @@
 // ── component.js ──────────────────────────────────────────────────────────────
-// 렌더 엔진: 컴포넌트 실행 → diff → patch
+// 렌더 엔진: FunctionComponent 클래스 기반 컴포넌트 실행 → diff → patch
 
 import { diff, patch, vnodeToDOM, deepCopy, cleanupHandlers } from './vdom.js';
-import { setRenderFn, setCurrentComponent, flushEffects } from './hooks.js';
+import { setCurrentInstance, clearCurrentInstance, flushEffects, cleanupAllEffects, setAppInstance } from './hooks.js';
+import { trace } from './tracer.js';
 
-let rootDOM = null;        // 실제 DOM 루트 노드
-let currentVTree = null;   // 현재 VNode 트리
-let rootComponent = null;  // 최상위 컴포넌트 함수
-let mountTarget = null;    // 마운트할 DOM 요소
-
-// 컴포넌트 호출 스택 (훅 아이덴티티용)
-const componentStack = [];
-let componentCallCount = {};
-
-export function beginComponent(name) {
-  componentCallCount[name] = (componentCallCount[name] || 0) + 1;
-  const key = `${name}#${componentCallCount[name]}`;
-  componentStack.push(key);
-  setCurrentComponent(key);
-  return key;
-}
-
-export function endComponent() {
-  componentStack.pop();
-  const parent = componentStack[componentStack.length - 1];
-  if (parent) setCurrentComponent(parent);
-}
-
-function renderApp() {
-  if (!rootComponent || !mountTarget) return;
-
-  // 컴포넌트 콜 카운트 초기화 (렌더마다 새로 셈)
-  componentCallCount = {};
-
-  // 최상위 컴포넌트 실행 → 새 VNode 트리
-  beginComponent('App');
-  const newVTree = rootComponent();
-  endComponent();
-
-  if (!currentVTree) {
-    // 첫 렌더: DOM 생성
-    rootDOM = vnodeToDOM(newVTree);
-    mountTarget.appendChild(rootDOM);
-  } else {
-    // 이후 렌더: diff → patch
-    const patches = diff(currentVTree, newVTree, [], { v: 0 }, 'root');
-    if (patches.length > 0) {
-      rootDOM = patch(rootDOM, patches);
-    }
+export class FunctionComponent {
+  constructor(fn, container) {
+    this.fn = fn;
+    this.container = container;
+    this.hooks = [];        // 상태 저장용 hooks 배열
+    this.hookIndex = 0;
+    this.vTree = null;
+    this.rootDOM = null;
+    this.pendingEffects = [];
+    this.renderScheduled = false;
+    this.pendingUpdateCause = null;
   }
 
-  currentVTree = deepCopy(newVTree);
-  cleanupHandlers(rootDOM);
+  // 처음 렌더링
+  mount() {
+    trace('UPDATE', { component: this.fn.name, cause: 'mount' });
+    setCurrentInstance(this);
+    const vTree = this.fn();
+    clearCurrentInstance();
+    trace('VDOM', { root: { tagName: vTree.tagName || vTree.type, childCount: (vTree.children || []).length } });
 
-  // effects 실행 (DOM 패치 후)
-  requestAnimationFrame(() => {
-    flushEffects();
-  });
+    this.rootDOM = vnodeToDOM(vTree);
+    this.container.appendChild(this.rootDOM);
+    this.vTree = deepCopy(vTree);
+    cleanupHandlers(this.rootDOM);
+
+    trace('RENDER', { phase: 'mount', component: this.fn.name });
+    requestAnimationFrame(() => flushEffects(this));
+  }
+
+  // 상태 변경 후 다시 렌더링
+  update() {
+    this.renderScheduled = false;
+    const t0 = performance.now();
+    const cause = this.pendingUpdateCause || 'state update';
+    this.pendingUpdateCause = null;
+
+    trace('UPDATE', { component: this.fn.name, cause });
+    setCurrentInstance(this);
+    const newVTree = this.fn();
+    clearCurrentInstance();
+    trace('VDOM', { root: { tagName: newVTree.tagName || newVTree.type, childCount: (newVTree.children || []).length } });
+
+    const patches = diff(this.vTree, newVTree);
+    if (patches.length > 0) {
+      this.rootDOM = patch(this.rootDOM, patches);
+    }
+    this.vTree = deepCopy(newVTree);
+    cleanupHandlers(this.rootDOM);
+
+    trace('RENDER', {
+      phase: 'update',
+      component: this.fn.name,
+      patchCount: patches.length,
+      cause,
+      duration: Math.round((performance.now() - t0) * 10) / 10,
+    });
+    requestAnimationFrame(() => flushEffects(this));
+  }
+
+  scheduleUpdate() {
+    if (this.renderScheduled) return;
+    this.renderScheduled = true;
+    trace('STATE', {
+      reason: 'scheduleUpdate',
+      component: this.fn.name,
+      cause: this.pendingUpdateCause || null,
+    });
+    queueMicrotask(() => this.update());
+  }
+
+  destroy() {
+    cleanupAllEffects(this);
+  }
 }
 
-export function mount(component, target) {
-  rootComponent = component;
-  mountTarget = target;
-  setRenderFn(renderApp);
-  renderApp();
+export function mount(fn, container) {
+  const instance = new FunctionComponent(fn, container);
+  setAppInstance(instance);
+  instance.mount();
+  return instance;
 }
+
+// Backward compat stubs (컴포넌트 파일에서 호출 시 무해하게 동작)
+export function beginComponent() {}
+export function endComponent() {}
+
+export function __resetComponentForTests() {}

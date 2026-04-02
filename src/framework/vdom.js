@@ -1,6 +1,8 @@
 // ── vdom.js ──────────────────────────────────────────────────────────────────
 // week4 diff/patch 엔진을 ES 모듈로 추출 + 이벤트 위임 시스템 추가
 
+import { trace } from './tracer.js';
+
 export const VOID_TAGS = new Set([
   'area','base','br','col','embed','hr','img','input',
   'link','meta','param','source','track','wbr'
@@ -9,10 +11,14 @@ export const VOID_TAGS = new Set([
 // ── 이벤트 위임 시스템 ────────────────────────────────────────────────────────
 const EVENT_HANDLERS = new Map(); // vdomId → { click: fn, input: fn, ... }
 let nextVdomId = 1;
+let delegationInitialized = false;
 
 const DELEGATED_EVENTS = ['click', 'input', 'change', 'submit', 'keydown', 'keyup'];
 
 function initEventDelegation() {
+  if (delegationInitialized || typeof document === 'undefined') return;
+  delegationInitialized = true;
+
   for (const eventType of DELEGATED_EVENTS) {
     document.addEventListener(eventType, (e) => {
       let target = e.target;
@@ -21,6 +27,11 @@ function initEventDelegation() {
         if (id) {
           const handlers = EVENT_HANDLERS.get(id);
           if (handlers && handlers[eventType]) {
+            trace('ACTION', {
+              eventType,
+              target: describeTarget(target),
+              vdomId: id,
+            });
             handlers[eventType](e);
             break;
           }
@@ -38,6 +49,9 @@ if (typeof document !== 'undefined') {
 export function cleanupHandlers(domRoot) {
   if (!domRoot) return;
   const existingIds = new Set();
+  if (domRoot.nodeType === Node.ELEMENT_NODE && domRoot.hasAttribute('data-vdom-id')) {
+    existingIds.add(domRoot.getAttribute('data-vdom-id'));
+  }
   domRoot.querySelectorAll('[data-vdom-id]').forEach(el => {
     existingIds.add(el.getAttribute('data-vdom-id'));
   });
@@ -81,12 +95,18 @@ export function createElement(tagName, props = {}, ...children) {
 }
 
 // ── VNode → DOM ───────────────────────────────────────────────────────────────
-export function vnodeToDOM(vnode, doc = document) {
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const SVG_TAGS = new Set(['svg','path','circle','rect','line','polyline','polygon','ellipse','g','defs','use','symbol','text','tspan','clippath','mask','pattern','linearGradient','radialGradient','stop']);
+
+export function vnodeToDOM(vnode, doc = document, ns = null) {
   if (vnode.type === 'text') {
     return doc.createTextNode(vnode.text);
   }
 
-  const el = doc.createElement(vnode.tagName);
+  const isSvg = ns === SVG_NS || SVG_TAGS.has(vnode.tagName);
+  const el = isSvg
+    ? doc.createElementNS(SVG_NS, vnode.tagName)
+    : doc.createElement(vnode.tagName);
 
   // 이벤트 핸들러 등록
   if (vnode.handlers && Object.keys(vnode.handlers).length > 0) {
@@ -103,8 +123,9 @@ export function vnodeToDOM(vnode, doc = document) {
   }
 
   if (!VOID_TAGS.has(vnode.tagName)) {
+    const childNs = isSvg ? SVG_NS : null;
     for (const child of (vnode.children || [])) {
-      el.appendChild(vnodeToDOM(child, doc));
+      el.appendChild(vnodeToDOM(child, doc, childNs));
     }
   }
 
@@ -159,10 +180,29 @@ export function diffProps(op, np) {
 
 // ── diff ──────────────────────────────────────────────────────────────────────
 export function diff(oldV, newV, patches, idx, path) {
-  patches = patches || [];
-  idx     = idx     || { v: 0 };
-  path    = path    || 'root';
+  const resolvedPatches = patches || [];
+  const resolvedIdx = idx || { v: 0 };
+  const resolvedPath = path || 'root';
+  const isRootCall = resolvedIdx.v === 0 && resolvedPath === 'root';
+  const nextPatches = diffImpl(oldV, newV, resolvedPatches, resolvedIdx, resolvedPath);
+
+  if (isRootCall) {
+    trace('DIFF', {
+      count: nextPatches.length,
+      patches: nextPatches.map(summarizePatch),
+    });
+  }
+
+  return nextPatches;
+}
+
+function diffImpl(oldV, newV, patches, idx, path) {
   const cur = idx.v;
+
+  if (oldV && newV && oldV.key !== newV.key) {
+    patches.push({ type: 'REPLACE', index: cur, oldV, newV, path });
+    return patches;
+  }
 
   if (oldV && newV &&
       (oldV.type !== newV.type ||
@@ -196,6 +236,13 @@ export function diff(oldV, newV, patches, idx, path) {
 
     const oc = oldV.children || [];
     const nc = newV.children || [];
+    const hasKeyedChildren =
+      oc.some(child => child && child.key !== null) ||
+      nc.some(child => child && child.key !== null);
+    if (hasKeyedChildren && !isSameKeyOrder(oc, nc)) {
+      patches.push({ type: 'REPLACE', index: cur, oldV, newV, path });
+      return patches;
+    }
     const maxLen = Math.max(oc.length, nc.length);
 
     for (let i = 0; i < maxLen; i++) {
@@ -209,7 +256,7 @@ export function diff(oldV, newV, patches, idx, path) {
         patches.push({ type: 'INSERT', index: idx.v, newV: nc[i], path: childPath });
         idx.v += countNodes(nc[i]) - 1;
       } else {
-        diff(oc[i], nc[i], patches, idx, childPath);
+        diffImpl(oc[i], nc[i], patches, idx, childPath);
       }
     }
   }
@@ -221,10 +268,11 @@ export function diff(oldV, newV, patches, idx, path) {
 export function buildIndexMap(node, map, idx) {
   map = map || new Map();
   idx = idx || { v: 0 };
+  if (!shouldCountNode(node)) return map;
   map.set(idx.v, node);
   if (node.nodeType !== Node.ELEMENT_NODE) return map;
   for (const child of node.childNodes) {
-    if (child.nodeType === Node.TEXT_NODE && !child.textContent.trim()) continue;
+    if (!shouldCountNode(child)) continue;
     idx.v++;
     buildIndexMap(child, map, idx);
   }
@@ -240,12 +288,19 @@ function flashNode(el) {
 
 // ── patch ─────────────────────────────────────────────────────────────────────
 export function patch(domRoot, patches) {
-  if (!domRoot || !patches || !patches.length) return domRoot;
-  const map = buildIndexMap(domRoot);
+  if (!domRoot || !patches || !patches.length) {
+    trace('PATCH', {
+      count: 0,
+      applied: [],
+    });
+    return domRoot;
+  }
   const doc = domRoot.ownerDocument || document;
   let currentRoot = domRoot;
+  const map = buildIndexMap(currentRoot);
+  const sortedPatches = [...patches].sort((a, b) => b.index - a.index);
 
-  for (const p of patches) {
+  for (const p of sortedPatches) {
     const target = map.get(p.index);
 
     switch (p.type) {
@@ -290,10 +345,10 @@ export function patch(domRoot, patches) {
         if (target && target.parentNode) {
           target.parentNode.insertBefore(neo, target);
         } else {
-          const prevNode = map.get(p.index - 1);
+          const prevNode = findNearestMountedNode(map, p.index - 1);
           const parent = prevNode
             ? (prevNode.nodeType === Node.ELEMENT_NODE ? prevNode : prevNode.parentNode)
-            : domRoot;
+            : currentRoot.parentNode;
           if (parent) parent.appendChild(neo);
         }
         flashNode(neo);
@@ -308,7 +363,17 @@ export function patch(domRoot, patches) {
     }
   }
 
+  trace('PATCH', {
+    count: patches.length,
+    applied: patches.map(summarizePatch),
+  });
+
   return currentRoot;
+}
+
+export function __resetVdomForTests() {
+  EVENT_HANDLERS.clear();
+  nextVdomId = 1;
 }
 
 // ── deepCopy ──────────────────────────────────────────────────────────────────
@@ -325,4 +390,63 @@ export function deepCopy(obj) {
     }
   }
   return result;
+}
+
+function describeTarget(target) {
+  if (!target || target.nodeType !== Node.ELEMENT_NODE) return null;
+
+  const text = (target.textContent || '').trim().replace(/\s+/g, ' ');
+  return {
+    tagName: target.tagName.toLowerCase(),
+    id: target.id || null,
+    className: target.className || '',
+    text: text.slice(0, 60),
+  };
+}
+
+function summarizePatch(patchEntry) {
+  const summary = {
+    type: patchEntry.type,
+    path: patchEntry.path,
+  };
+
+  if (patchEntry.type === 'TEXT') {
+    summary.from = patchEntry.oldText;
+    summary.to = patchEntry.text;
+  }
+
+  if (patchEntry.type === 'PROPS') {
+    summary.props = Object.keys(patchEntry.propsDiff || {});
+  }
+
+  if (patchEntry.type === 'INSERT' || patchEntry.type === 'REPLACE') {
+    summary.tagName = patchEntry.newV?.tagName || patchEntry.newV?.type || null;
+  }
+
+  return summary;
+}
+
+function shouldCountNode(node) {
+  if (!node) return false;
+  if (node.nodeType === Node.TEXT_NODE) return true;
+  return node.nodeType === Node.ELEMENT_NODE;
+}
+
+function isSameKeyOrder(oldChildren, newChildren) {
+  if (oldChildren.length !== newChildren.length) return false;
+  for (let i = 0; i < oldChildren.length; i++) {
+    const oldKey = oldChildren[i]?.key ?? null;
+    const newKey = newChildren[i]?.key ?? null;
+    if (oldKey !== newKey) return false;
+  }
+  return true;
+}
+
+function findNearestMountedNode(map, startIndex) {
+  for (let i = startIndex; i >= 0; i--) {
+    const node = map.get(i);
+    if (!node) continue;
+    if (node.parentNode || node.nodeType === Node.ELEMENT_NODE) return node;
+  }
+  return null;
 }
