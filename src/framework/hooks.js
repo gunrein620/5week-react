@@ -161,15 +161,23 @@ function normalizeTraceCause(cause) {
 }
 
 // ── useMemo ───────────────────────────────────────────────────────────────────
-export function useMemo(factory, deps) {
+export function useMemo(factory, deps, label) {
   const instance = currentInstance;
   const idx = instance.hookIndex++;
 
   // 첫 렌더: factory 실행 후 결과와 deps를 저장
   if (idx >= instance.hooks.length) {
     const value = factory();
-    instance.hooks.push({ type: 'memo', value, deps: deps ? [...deps] : undefined });
-    trace('HOOK', { hook: 'useMemo', phase: 'init', idx });
+    instance.hooks.push({ type: 'memo', value, deps: deps ? [...deps] : undefined, label });
+    trace('MEMO', {
+      hook: 'useMemo',
+      phase: 'init',
+      idx,
+      label,
+      deps,
+      value,
+      reason: '초기 계산',
+    });
     return value;
   }
 
@@ -182,11 +190,29 @@ export function useMemo(factory, deps) {
     !shallowEqual(prevDeps, deps);
 
   if (shouldRecompute) {
-    trace('HOOK', { hook: 'useMemo', phase: 'recompute', idx });
     hook.value = factory();
     hook.deps = deps ? [...deps] : undefined;
+    if (label) hook.label = label;
+    trace('MEMO', {
+      hook: 'useMemo',
+      phase: 'recompute',
+      idx,
+      label: label || hook.label,
+      deps,
+      prevDeps,
+      value: hook.value,
+      reason: deps === undefined ? 'deps 없음 → 매 렌더 재계산' : 'deps 변경 → 캐시 갱신',
+    });
   } else {
-    trace('HOOK', { hook: 'useMemo', phase: 'cache-hit', idx });
+    trace('MEMO', {
+      hook: 'useMemo',
+      phase: 'cache-hit',
+      idx,
+      label: label || hook.label,
+      deps,
+      value: hook.value,
+      reason: 'deps 동일 → 캐시 재사용',
+    });
   }
 
   return hook.value;

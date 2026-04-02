@@ -7,7 +7,7 @@ export const TRACE_TYPES = {
   HOOK:   { color: '#fbbf24', icon: '⚡', label: 'HOOK'   },
   STATE:  { color: '#fbbf24', icon: '📦', label: 'STATE'  },
   EFFECT: { color: '#f97316', icon: '🔄', label: 'EFFECT' },
-  MEMO:   { color: '#a78bfa', icon: '🧠', label: 'MEMO'   },
+  MEMO:   { color: '#2dd4bf', icon: '🧠', label: 'MEMO'   },
   VDOM:   { color: '#c084fc', icon: '🌳', label: 'VDOM'   },
   DIFF:   { color: '#c084fc', icon: '🔍', label: 'DIFF'   },
   PATCH:  { color: '#34d399', icon: '✏️', label: 'PATCH'  },

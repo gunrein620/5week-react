@@ -1,7 +1,7 @@
 // ── scenarios.js ──────────────────────────────────────────────────────────────
 // Flicker DevTools 시나리오 정의 (5개)
 
-import { trace } from '../framework/tracer.js';
+import { trace, addTraceListener, removeTraceListener } from '../framework/tracer.js';
 import { navigate } from '../framework/router.js';
 import {
   TimeController,
@@ -218,8 +218,8 @@ export const scenarios = [
     id: 'login',
     icon: '🔑',
     title: '로그인',
-    description: 'useState + useEffect 조합 + 라우팅 — 로그인 흐름 전체',
-    highlights: ['useState', 'useEffect'],
+    description: 'useState + useEffect + useMemo(파생 데이터 캐시) + 라우팅 — 로그인 후 App 전체 리렌더',
+    highlights: ['useState', 'useEffect', 'useMemo'],
     enabled: true,
 
     async run() {
@@ -360,28 +360,90 @@ export const scenarios = [
     },
   },
 
-  // ── 5. 메모이제이션 (useMemo) — 추후 구현 ────────────────────────────────
+  // ── 5. 메모이제이션 (useMemo) ────────────────────────────────────────────
   {
     id: 'memo',
     icon: '🧠',
     title: '메모이제이션 (useMemo)',
     description: 'useMemo 캐싱 vs 재계산 — deps 비교를 통한 불필요한 연산 스킵',
     highlights: ['useMemo'],
-    enabled: false,
-    disabledMessage: 'useMemo는 다음 버전에서 구현 예정입니다',
-    plannedVerify: [
-      'deps 변경 시 factory가 재실행되는가',
-      'deps 동일 시 캐시된 값을 반환하는가 (재계산 스킵)',
-      '여러 useMemo가 독립적으로 동작하는가',
-    ],
+    enabled: true,
+
+    async setup() {
+      await ensureLoggedIn();
+      await silentCreatePost(await ensureLoggedIn(), 'useMemo 테스트용 게시글 🧠');
+      navigate('#/feed');
+      await silentRefreshFeed();
+      await wait(300);
+    },
 
     async run() {
-      trace('ACTION', { message: '🧠 useMemo 시나리오는 아직 구현 전입니다.' });
+      this._memoTraces = { cacheHit: 0, recompute: 0 };
+
+      const listener = (entry) => {
+        if (entry.type !== 'MEMO' || entry.detail?.hook !== 'useMemo') return;
+        if (entry.detail.phase === 'cache-hit') this._memoTraces.cacheHit++;
+        if (entry.detail.phase === 'recompute') this._memoTraces.recompute++;
+      };
+      addTraceListener(listener);
+
+      try {
+        // Phase 1: cache-hit 유도 — livePosts 변화 없이 라우트만 전환
+        trace('ACTION', {
+          message: '🧠 [Phase 1] 라우트 전환 — livePosts 변화 없음 → useMemo cache-hit 예상',
+        });
+
+        navigate('#/feed');
+        await wait(400);
+
+        navigate('#/create');
+        await wait(400);
+
+        navigate('#/feed');
+        await wait(400);
+
+        trace('ACTION', {
+          message: `📋 Phase 1 결과 — cache-hit: ${this._memoTraces.cacheHit}회, recompute: ${this._memoTraces.recompute}회`,
+          cacheHit: this._memoTraces.cacheHit,
+          recompute: this._memoTraces.recompute,
+        });
+
+        // Phase 2: recompute 유도 — __dtRefreshPosts() 호출로 새 배열 참조
+        trace('ACTION', {
+          message: '🔄 [Phase 2] 피드 새로고침 — setLivePosts(새 배열) → useMemo recompute 예상',
+        });
+
+        const beforeRecompute = this._memoTraces.recompute;
+        if (typeof window.__dtRefreshPosts === 'function') {
+          await window.__dtRefreshPosts();
+        }
+        await wait(600);
+
+        trace('ACTION', {
+          message: `📋 Phase 2 결과 — recompute ${this._memoTraces.recompute - beforeRecompute}회 발생 (누적 cache-hit: ${this._memoTraces.cacheHit}회)`,
+          cacheHit: this._memoTraces.cacheHit,
+          recompute: this._memoTraces.recompute,
+        });
+      } finally {
+        removeTraceListener(listener);
+      }
     },
 
     verify() {
+      const traces = this._memoTraces || { cacheHit: 0, recompute: 0 };
       return [
-        { label: 'useMemo 구현 예정', check: () => false },
+        {
+          label: 'deps 동일 시 cache-hit가 발생했는가',
+          check: () => traces.cacheHit > 0,
+        },
+        {
+          label: 'deps 변경 시 recompute가 발생했는가',
+          check: () => traces.recompute > 0,
+        },
+        {
+          label: '피드가 정상 렌더링되는가',
+          check: () => Boolean(document.querySelector('.feed-page')),
+        },
       ];
     },
   },
